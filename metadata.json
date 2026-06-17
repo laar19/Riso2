@@ -1,0 +1,6 @@
+{
+  "name": "Riso",
+  "description": "Riso is a local AI client with integrated SMTP/IMAP and Gmail automation agent tools.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
