@@ -508,13 +508,13 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                     processLlmResponse(sessionId, response)
                 }
 
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 Log.e(TAG, "Error in primary agent loop message loop", e)
                 repository.addMessage(
                     ChatMessage(
                         sessionId = sessionId,
                         sender = "ai",
-                        text = "Riso Error: No se pudo resolver la respuesta localmente. Revisa el puerto de internet y tus API keys en ajustes."
+                        text = "Riso Error: No se pudo resolver la respuesta localmente. Detalles: ${e.localizedMessage ?: e.message ?: "error desconocido"}. Por favor, revisa tu conexión a Internet y tus claves de API en Ajustes."
                     )
                 )
             } finally {
@@ -558,7 +558,8 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
 
         val isWriteAction = fName in listOf(
             "send_email", "reply_to_email", "forward_email",
-            "mark_as_read", "mark_as_unread", "archive_email", "delete_email"
+            "mark_as_read", "mark_as_unread", "archive_email", "delete_email",
+            "create_github_issue", "create_gitlab_issue"
         )
 
         if (isWriteAction && _planningMode.value) {
@@ -575,13 +576,19 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                 planDetails
             )
 
+            val headTitle = when {
+                fName.contains("github") -> "🛡️ **Planificación de Acción en GitHub**"
+                fName.contains("gitlab") -> "🛡️ **Planificación de Acción en GitLab**"
+                else -> "🛡️ **Planificación de Acción de Correo**"
+            }
+
             // Prompt user with Action Card inline in chat
             repository.addMessage(
                 ChatMessage(
                     id = msgId,
                     sessionId = sessionId,
                     sender = "ai",
-                    text = "🛡️ **Planificación de Acción de Correo**\nHe planeado la siguiente acción de escritura. Por favor, revísala y confirma.",
+                    text = "$headTitle\nHe planeado la siguiente acción de escritura. Por favor, revísala y confirma.",
                     pendingActionId = action.id
                 )
             )
@@ -828,7 +835,9 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
             "mark_as_unread" -> "Marcar el correo '${args["id"]}' como NO leído."
             "archive_email" -> "Archivar el correo '${args["id"]}' (remover de la bandeja)."
             "delete_email" -> "Mover el correo '${args["id"]}' a la papelera (eliminar)."
-            else -> "Ejecutar la operación de correo '$fName'."
+            "create_github_issue" -> "Crear un issue en GitHub en '${args["owner"]}/${args["repo"]}' con título '${args["title"]}'."
+            "create_gitlab_issue" -> "Crear un issue en GitLab en el proyecto '${args["projectId"]}' con título '${args["title"]}'."
+            else -> "Ejecutar la operación '$fName'."
         }
     }
 

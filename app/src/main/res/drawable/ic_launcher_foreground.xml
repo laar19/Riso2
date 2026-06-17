@@ -5,36 +5,51 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- Glowing Vector Base Accent (Indigo Aura) -->
+    <!-- Glowing Vector Base Accent (Deep Pine Emerald Aura) -->
     <path
-        android:fillColor="#3A3F70"
-        android:pathData="M54,54m-28,0a28,28 0,1 1,56 0a28,28 0,1 1,-56 0" />
+        android:fillColor="#0D3B2E"
+        android:pathData="M54,54m-33,0a33,33 0,1 1,66 0a33,33 0,1 1,-66 0" />
 
-    <!-- AI Spark star (glowing cyan and violet) -->
+    <!-- Stylized Lotus Flower (Riso Lotus Concept in Premium Green) -->
+    
+    <!-- Left Base Leaf / Sepal (Back layer) -->
     <path
-        android:fillColor="#8F5CFF"
-        android:pathData="M54,18 L56.5,24 L62.5,25.5 L56.5,27 L54,33 L51.5,27 L45.5,25.5 L51.5,24 Z" />
+        android:fillColor="#052E21"
+        android:pathData="M54,78 C46,84 38,82 32,76 C40,74 48,76 54,78 Z" />
 
+    <!-- Right Base Leaf / Sepal (Back layer) -->
     <path
-        android:fillColor="#06B6D4"
-        android:pathData="M78,34 L80,38 M30,34 L28,38" />
+        android:fillColor="#052E21"
+        android:pathData="M54,78 C62,84 70,82 76,76 C68,74 60,76 54,78 Z" />
 
-    <!-- Modern Envelope Shape -->
-    <!-- Envelope Base Rectangle -->
+    <!-- Left Outer Petal (Back layer) -->
+    <path
+        android:fillColor="#065F46"
+        android:pathData="M54,78 C20,78 14,62 24,50 C30,53 38,60 54,78 Z" />
+
+    <!-- Right Outer Petal (Back layer) -->
+    <path
+        android:fillColor="#047857"
+        android:pathData="M54,78 C88,78 94,62 84,50 C78,53 70,60 54,78 Z" />
+
+    <!-- Left Inner Petal (Middle layer) -->
+    <path
+        android:fillColor="#10B981"
+        android:pathData="M54,78 C34,73 28,53 38,40 C43,46 48,56 54,78 Z" />
+
+    <!-- Right Inner Petal (Middle layer) -->
+    <path
+        android:fillColor="#059669"
+        android:pathData="M54,78 C74,73 80,53 70,40 C65,46 60,56 54,78 Z" />
+
+    <!-- Central Petal (Front highlight layer) -->
+    <path
+        android:fillColor="#A7F3D0"
+        android:pathData="M54,78 C44,63 44,43 54,30 C64,43 64,63 54,78 Z" />
+
+    <!-- Accent Spark Highlight inside the core -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M30,42h48v26h-48z" />
-
-    <!-- Top flap (Slate Indigo Accent) -->
-    <path
-        android:fillColor="#C3C9FF"
-        android:pathData="M30,42 L54,58 L78,42 Z" />
-
-    <!-- Envelope bottom stitch lines -->
-    <path
-        android:strokeColor="#10111D"
-        android:strokeWidth="1.5"
-        android:strokeLineCap="round"
-        android:pathData="M30,68 L48,55 M78,68 L60,55" />
+        android:pathData="M54,42 L55,44 L57,44.5 L55,45 L54,47 L53,45 L51,44.5 L53,44 Z" />
 
 </vector>

@@ -304,6 +304,14 @@ class LlmService {
         )
     )
 
+    private fun isKeyInvalidOrPlaceholder(key: String?): Boolean {
+        if (key.isNullOrBlank()) return true
+        val trimmed = key.trim()
+        return trimmed.equals("MY_GEMINI_API_KEY", ignoreCase = true) ||
+                trimmed.equals("YOUR_API_KEY", ignoreCase = true) ||
+                trimmed.contains("PLACEHOLDER", ignoreCase = true)
+    }
+
     // Execute completion against Gemini (supports fallback if customized key is empty)
     suspend fun resolveLlm(
         history: List<GeminiContent>,
@@ -321,9 +329,10 @@ class LlmService {
             BuildConfig.GEMINI_API_KEY
         }
 
-        if (resolvedKey.isBlank() && provider.lowercase().contains("gemini")) {
-            Log.e(TAG, "API Key is empty! Please check local secrets or configure Gemini in Settings.")
-            return getErrorResponse("Riso Error: No se ha configurado la API Key. Por favor ve a Ajustes y configúrala de forma segura.")
+        val isGemini = provider.lowercase().contains("gemini")
+        if (isGemini && isKeyInvalidOrPlaceholder(resolvedKey)) {
+            Log.e(TAG, "Gemini API Key is empty or placeholder! Please configure it in Settings.")
+            return getErrorResponse("⚠️ **Clave de API de Gemini No Configurada**\n\nNo se ha detectado una clave de API válida para Gemini.\n\nPor favor, ve a **Ajustes** en el menú lateral e introduce tu API Key de Google AI Studio, o configúrala en el archivo de secretos del proyecto.")
         }
 
         try {
@@ -370,8 +379,8 @@ class LlmService {
                 
                 // If they have OpenAI or Claude custom keys, we could call actual endpoints,
                 // but since they might be blank, we leverage Gemini as our secure core router:
-                if (BuildConfig.GEMINI_API_KEY.isNotBlank() || !customApiKey.isNullOrBlank()) {
-                    val actualKey = if (BuildConfig.GEMINI_API_KEY.isNotBlank()) BuildConfig.GEMINI_API_KEY else customApiKey ?: ""
+                if (!isKeyInvalidOrPlaceholder(customApiKey)) {
+                    val actualKey = customApiKey ?: ""
                     val request = GeminiRequest(
                         contents = history,
                         systemInstruction = GeminiContent(parts = listOf(GeminiPart(text = "Eres Riso en modo simulador de $provider. Manten el rol y actua con las mismas conexiones MCP: $systemPrompt"))),
@@ -379,13 +388,21 @@ class LlmService {
                         generationConfig = GeminiGenerationConfig(temperature = 0.5f)
                     )
                     return api.generateContent(model = "gemini-3.5-flash", key = actualKey, request = request)
+                } else if (!isKeyInvalidOrPlaceholder(BuildConfig.GEMINI_API_KEY)) {
+                    val request = GeminiRequest(
+                        contents = history,
+                        systemInstruction = GeminiContent(parts = listOf(GeminiPart(text = "Eres Riso en modo simulador de $provider. Manten el rol y actua con las mismas conexiones MCP: $systemPrompt"))),
+                        tools = toolsPayload,
+                        generationConfig = GeminiGenerationConfig(temperature = 0.5f)
+                    )
+                    return api.generateContent(model = "gemini-3.5-flash", key = BuildConfig.GEMINI_API_KEY, request = request)
                 } else {
-                    return getErrorResponse("Riso: La clave para $provider no está cargada y no hay clave global de Gemini. Cárgala en Ajustes.")
+                    return getErrorResponse("⚠️ **Clave de API para $provider No Configurada**\n\nNo se ha detectado ninguna clave de API para $provider, y tampoco hay una clave alternativa global de Gemini.\n\nPor favor, ve a **Ajustes** en el menú lateral para configurar tus claves de forma segura y habilitar la inteligencia.")
                 }
             }
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.e(TAG, "Error in resolveLlm: ${e.message}", e)
-            return getErrorResponse("Riso Error: Ocurrió un error al contactar al resolvedor LLM: ${e.message}")
+            return getErrorResponse("⚠️ **Error de Conexión o Servicio**\n\nNo se pudo obtener respuesta del resolvedor de IA. Detalles: ${e.localizedMessage ?: e.message ?: "Error desconocido de red"}\n\nPor favor, verifica tu conexión a internet o comprueba si tu clave de API configurada es correcta.")
         }
     }
 
