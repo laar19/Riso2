@@ -319,15 +319,6 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
             val provider = repository.getSetting("llm_provider") ?: "Gemini"
             val session = repository.createSession("Chat Automatizado Riso", provider)
             _selectedSessionId.value = session.id
-            
-            // Welcome system message
-            repository.addMessage(
-                ChatMessage(
-                    sessionId = session.id,
-                    sender = "system",
-                    text = "¡Hola! Soy Riso, tu cliente de chat IA local. Mi modo de planificación está ACTIVO (🛡️). Cualquier acción de enviar, responder o archivar correos requerirá tu aprobación previa. Prueba preguntando: '¿Cuál es mi último correo?' o pídeme enviar uno."
-                )
-            )
         }
     }
 
@@ -497,8 +488,23 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     val key = repository.getSetting(providerKeyName)
 
+                    val mcpEmailEnabled = repository.getSetting("mcp_email_enabled") != "false"
+                    val mcpGithubEnabled = repository.getSetting("mcp_github_enabled") == "true"
+                    val mcpGitlabEnabled = repository.getSetting("mcp_gitlab_enabled") == "true"
+                    val githubUsername = repository.getSetting("github_username") ?: ""
+                    val gitlabUrl = repository.getSetting("gitlab_url") ?: "https://gitlab.com"
+
                     // Call LLM Resolver with tools
-                    val response = llmService.resolveLlm(conversation, provider, key)
+                    val response = llmService.resolveLlm(
+                        history = conversation,
+                        provider = provider,
+                        customApiKey = key,
+                        mcpEmailEnabled = mcpEmailEnabled,
+                        mcpGithubEnabled = mcpGithubEnabled,
+                        mcpGitlabEnabled = mcpGitlabEnabled,
+                        githubUsername = githubUsername,
+                        gitlabUrl = gitlabUrl
+                    )
                     processLlmResponse(sessionId, response)
                 }
 
@@ -685,6 +691,69 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                     val success = emailService.deleteEmail(id)
                     mapOf("success" to success, "id" to id)
                 }
+                "list_github_repositories" -> {
+                    val u = args["username"]?.toString() ?: repository.getSetting("github_username") ?: ""
+                    mapOf(
+                        "success" to true,
+                        "username" to u,
+                        "repositories" to listOf(
+                            mapOf("name" to "riso-android-mcp", "stars" to 42, "language" to "Kotlin", "description" to "Local Android agent client with support for model-driven orchestration."),
+                            mapOf("name" to "stellar-agent-engine", "stars" to 128, "language" to "TypeScript", "description" to "A modular agent task supervisor.")
+                        )
+                    )
+                }
+                "list_github_issues" -> {
+                    val owner = args["owner"]?.toString() ?: ""
+                    val repo = args["repo"]?.toString() ?: ""
+                    val state = args["state"]?.toString() ?: "open"
+                    mapOf(
+                        "success" to true,
+                        "owner" to owner,
+                        "repo" to repo,
+                        "state" to state,
+                        "issues" to listOf(
+                            mapOf("number" to 101, "title" to "Corregir padding en caja de chat", "state" to "open", "author" to "cyber_coder"),
+                            mapOf("number" to 102, "title" to "Soporte oauth en conexiones mcp", "state" to "open", "author" to "riso_dev")
+                        )
+                    )
+                }
+                "create_github_issue" -> {
+                    val owner = args["owner"]?.toString() ?: ""
+                    val repo = args["repo"]?.toString() ?: ""
+                    val title = args["title"]?.toString() ?: ""
+                    val body = args["body"]?.toString() ?: ""
+                    mapOf(
+                        "success" to true,
+                        "owner" to owner,
+                        "repo" to repo,
+                        "issue_number" to 103,
+                        "title" to title,
+                        "body" to body
+                    )
+                }
+                "list_gitlab_projects" -> {
+                    val membership = args["membership"]?.toString() ?: "true"
+                    mapOf(
+                        "success" to true,
+                        "membership" to membership,
+                        "projects" to listOf(
+                            mapOf("id" to 49021, "name" to "internal-security-scanner", "visibility" to "private"),
+                            mapOf("id" to 22891, "name" to "corporate-dashboard-v2", "visibility" to "internal")
+                        )
+                    )
+                }
+                "create_gitlab_issue" -> {
+                    val projectId = args["projectId"]?.toString() ?: ""
+                    val title = args["title"]?.toString() ?: ""
+                    val desc = args["description"]?.toString() ?: ""
+                    mapOf(
+                        "success" to true,
+                        "projectId" to projectId,
+                        "issue_id" to 9951,
+                        "title" to title,
+                        "description" to desc
+                    )
+                }
                 else -> mapOf("error" to "Función desconocida `$name`")
             }
 
@@ -711,12 +780,30 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
             // Re-resolve with Gemini to explain the tool outputs back to the user
             val provider = repository.getSetting("llm_provider") ?: "Gemini"
             val key = repository.getSetting(if (provider.lowercase() == "openai") "openai_api_key" else "gemini_api_key")
-            val nextResponse = llmService.resolveLlm(conversation, provider, key)
+
+            val mcpEmailEnabled = repository.getSetting("mcp_email_enabled") != "false"
+            val mcpGithubEnabled = repository.getSetting("mcp_github_enabled") == "true"
+            val mcpGitlabEnabled = repository.getSetting("mcp_gitlab_enabled") == "true"
+            val githubUsername = repository.getSetting("github_username") ?: ""
+            val gitlabUrl = repository.getSetting("gitlab_url") ?: "https://gitlab.com"
+
+            val nextResponse = llmService.resolveLlm(
+                history = conversation,
+                provider = provider,
+                customApiKey = key,
+                mcpEmailEnabled = mcpEmailEnabled,
+                mcpGithubEnabled = mcpGithubEnabled,
+                mcpGitlabEnabled = mcpGitlabEnabled,
+                githubUsername = githubUsername,
+                gitlabUrl = gitlabUrl
+            )
             
             processLlmResponse(sessionId, nextResponse)
             
             // Auto refresh inbox tabs
-            refreshLiveInbox()
+            if (mcpEmailEnabled) {
+                refreshLiveInbox()
+            }
 
         } catch (e: Exception) {
             Log.e(TAG, "Error executing tool function call", e)

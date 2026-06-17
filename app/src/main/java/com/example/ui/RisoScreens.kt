@@ -1,5 +1,6 @@
 package com.example.ui
 
+import com.example.BuildConfig
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -100,7 +101,7 @@ fun RisoMainScreen(
                         Spacer(modifier = Modifier.width(12.dp))
                         Column {
                             Text(
-                                text = t("chat_agent"),
+                                text = "Riso Chatbot",
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 18.sp,
                                 color = MaterialTheme.colorScheme.onBackground
@@ -113,72 +114,6 @@ fun RisoMainScreen(
                         }
                     }
                     
-                    HorizontalDivider(color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.08f))
-                    Spacer(modifier = Modifier.height(16.dp))
-                    
-                    // Email Account Quick Switch Section
-                    Text(
-                        text = t("accounts_title").uppercase(),
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(start = 8.dp, end = 8.dp, bottom = 8.dp)
-                    )
-                    
-                    if (emailAccounts.isEmpty()) {
-                        Text(
-                            text = t("empty_accounts"),
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f),
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp)
-                        )
-                    } else {
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            emailAccounts.forEach { acc ->
-                                val isSelected = acc.id == activeEmailAccountId
-                                Surface(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(10.dp))
-                                        .clickable {
-                                            viewModel.selectActiveEmailAccount(acc.id)
-                                            coroutineScope.launch { drawerState.close() }
-                                        },
-                                    color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else Color.Transparent
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = if (isSelected) Icons.Default.Check else Icons.Default.Email,
-                                            contentDescription = "Account icon",
-                                            tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(10.dp))
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                text = acc.emailAddress,
-                                                fontSize = 13.sp,
-                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                                color = MaterialTheme.colorScheme.onBackground,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                            Text(
-                                                text = if (acc.id == "default_acc") (if (isEn) "Default" else "Predeterminado") else "IMAP: ${acc.imapServer}",
-                                                fontSize = 10.sp,
-                                                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f)
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    
-                    Spacer(modifier = Modifier.height(16.dp))
                     HorizontalDivider(color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.08f))
                     Spacer(modifier = Modifier.height(16.dp))
                     
@@ -347,13 +282,12 @@ fun RisoMainScreen(
                             Text(
                                 text = when (currentTab) {
                                     "chat" -> t("chat_agent")
-                                    "inbox" -> t("inbox_title")
                                     else -> t("settings_title")
                                 },
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 16.sp
                             )
-                            if (activeAccount != null) {
+                            if (currentTab == "chat" && activeAccount != null) {
                                 Text(
                                     text = activeAccount.emailAddress,
                                     fontSize = 11.sp,
@@ -369,22 +303,8 @@ fun RisoMainScreen(
                     },
                     actions = {
                         if (currentTab == "chat") {
-                            IconButton(
-                                onClick = { currentTab = "inbox" }
-                            ) {
-                                Text("📬", fontSize = 18.sp)
-                            }
                             IconButton(onClick = { viewModel.createNewSession() }) {
                                 Icon(Icons.Default.Add, contentDescription = "Nueva conversación")
-                            }
-                        } else if (currentTab == "inbox") {
-                            IconButton(
-                                onClick = { currentTab = "chat" }
-                            ) {
-                                Text("💬", fontSize = 18.sp)
-                            }
-                            IconButton(onClick = { viewModel.refreshLiveInbox() }) {
-                                Icon(Icons.Default.Refresh, contentDescription = "Refrescar correo")
                             }
                         }
                     },
@@ -402,8 +322,7 @@ fun RisoMainScreen(
             ) {
                 when (currentTab) {
                     "chat" -> RisoChatScreen(viewModel = viewModel)
-                    "inbox" -> RisoInboxScreen(viewModel = viewModel)
-                    "settings" -> RisoSettingsScreen(viewModel = viewModel)
+                    else -> RisoSettingsScreen(viewModel = viewModel)
                 }
             }
         }
@@ -418,6 +337,8 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
     val planningMode by viewModel.planningMode.collectAsStateWithLifecycle()
     val pendingActions by viewModel.pendingActions.collectAsStateWithLifecycle()
     val settings by viewModel.settings.collectAsStateWithLifecycle()
+    val emailAccounts by viewModel.emailAccounts.collectAsStateWithLifecycle()
+    val activeEmailAccountId by viewModel.activeEmailAccountId.collectAsStateWithLifecycle()
 
     val sttProvider by viewModel.sttProvider.collectAsStateWithLifecycle()
     val whisperStatus by viewModel.localWhisperStatus.collectAsStateWithLifecycle()
@@ -428,6 +349,24 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
     var textInput by remember { mutableStateOf("") }
     var showAttachMenu by remember { mutableStateOf(false) }
     var showModelSelector by remember { mutableStateOf(false) }
+
+    var tempGithubUsername by remember(settings) { mutableStateOf(settings["github_username"] ?: "") }
+    var tempGithubPat by remember(settings) { mutableStateOf(settings["github_pat"] ?: "") }
+    var tempGitlabUrl by remember(settings) { mutableStateOf(settings["gitlab_url"] ?: "https://gitlab.com") }
+    var tempGitlabPat by remember(settings) { mutableStateOf(settings["gitlab_pat"] ?: "") }
+
+    var oauthGithubWorking by remember { mutableStateOf(false) }
+    var oauthGitlabWorking by remember { mutableStateOf(false) }
+
+    var showMailManager by remember { mutableStateOf(false) }
+    var newEmailAddress by remember { mutableStateOf("") }
+    var newEmailPass by remember { mutableStateOf("") }
+    var newImapHost by remember { mutableStateOf("") }
+    var newSmtpHost by remember { mutableStateOf("") }
+
+    val mcpEmailEnabled = settings["mcp_email_enabled"] != "false"
+    val mcpGithubEnabled = settings["mcp_github_enabled"] == "true"
+    val mcpGitlabEnabled = settings["mcp_gitlab_enabled"] == "true"
     
     val isEn = settings["language"] == "en"
     fun t(key: String): String = L10n.t(key, isEn)
@@ -435,6 +374,7 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
 
     val listState = rememberLazyListState()
     val keyboardController = LocalSoftwareKeyboardController.current
+    val coroutineScope = rememberCoroutineScope()
 
     // Auto scroll down with messages
     LaunchedEffect(messages.size, isLlmLoading) {
@@ -555,11 +495,30 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
                             modifier = Modifier.padding(bottom = 8.dp)
                         )
 
-                        listOf(
-                            Triple("Gemini", "🤖 Gemini", t("llm_gemini_desc")),
-                            Triple("OpenAI", "⚡ OpenAI", t("llm_openai_desc")),
-                            Triple("Claude", "🔮 Claude", t("llm_claude_desc"))
-                        ).forEach { (id, title, desc) ->
+                        val availableModels = mutableListOf<Triple<String, String, String>>()
+                        
+                        // Gemini is always available if global compiled key, or any configured
+                        val geminiKey = settings["gemini_api_key"]
+                        val hasGemini = !geminiKey.isNullOrBlank() || BuildConfig.GEMINI_API_KEY.isNotBlank()
+                        if (hasGemini) {
+                            availableModels.add(Triple("Gemini", "🤖 Gemini", t("llm_gemini_desc")))
+                        }
+                        
+                        val openaiKey = settings["openai_api_key"]
+                        if (!openaiKey.isNullOrBlank()) {
+                            availableModels.add(Triple("OpenAI", "⚡ OpenAI", t("llm_openai_desc")))
+                        }
+                        
+                        val claudeKey = settings["claude_api_key"]
+                        if (!claudeKey.isNullOrBlank()) {
+                            availableModels.add(Triple("Claude", "🔮 Claude", t("llm_claude_desc")))
+                        }
+                        
+                        if (availableModels.isEmpty()) {
+                            availableModels.add(Triple("Gemini", "🤖 Gemini", t("llm_gemini_desc")))
+                        }
+
+                        availableModels.forEach { (id, title, desc) ->
                             val isSel = currentProvider == id
                             Row(
                                 modifier = Modifier
@@ -765,30 +724,22 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(8.dp)
+                .padding(horizontal = 8.dp, vertical = 6.dp)
                 .background(Color.Transparent),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Image Attachment trigger button
-            IconButton(
-                onClick = { showAttachMenu = true },
-                modifier = Modifier.size(40.dp)
-            ) {
-                Text("➕", fontSize = 20.sp) // Beautiful cross emoji for attachments
-            }
-
-            Spacer(modifier = Modifier.width(4.dp))
-
             OutlinedTextField(
                 value = textInput,
                 onValueChange = { textInput = it },
                 placeholder = { Text(t("chat_input_placeholder"), fontSize = 14.sp) },
-                shape = RoundedCornerShape(20.dp),
+                shape = RoundedCornerShape(24.dp),
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedBorderColor = MaterialTheme.colorScheme.primary,
-                    unfocusedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f)
+                    unfocusedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f),
+                    focusedContainerColor = MaterialTheme.colorScheme.surface,
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surface
                 ),
-                maxLines = 3,
+                maxLines = 4,
                 modifier = Modifier
                     .weight(1f)
                     .testTag("chat_input_text_field"),
@@ -800,10 +751,18 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
                         keyboardController?.hide()
                     }
                 }),
+                leadingIcon = {
+                    IconButton(
+                        onClick = { showAttachMenu = true },
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Text("➕", fontSize = 18.sp, modifier = Modifier.testTag("mcp_attachments_plus_button"))
+                    }
+                },
                 trailingIcon = {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(end = 4.dp)
+                        modifier = Modifier.padding(end = 12.dp) // Beautiful border on the safe right side
                     ) {
                         // Microphone button integrated directly inside the text input
                         IconButton(
@@ -822,7 +781,7 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
                             )
                         }
                         
-                        Spacer(modifier = Modifier.width(2.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
                         
                         // Send button embedded inside the text field on the safe RHS
                         IconButton(
@@ -835,7 +794,7 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
                             },
                             enabled = textInput.isNotBlank() || attachedImage != null,
                             modifier = Modifier
-                                .size(36.dp)
+                                .size(34.dp)
                                 .clip(CircleShape)
                                 .background(
                                     if (textInput.isNotBlank() || attachedImage != null)
@@ -849,7 +808,7 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
                                 imageVector = Icons.Default.Send,
                                 contentDescription = "Send",
                                 tint = if (textInput.isNotBlank() || attachedImage != null) Color.White else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
-                                modifier = Modifier.size(16.dp)
+                                modifier = Modifier.size(15.dp)
                             )
                         }
                     }
@@ -858,103 +817,433 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
         }
     }
 
-    // Attachment Dialog
+    // Unified MCP Connections + Attachments Dialog
     if (showAttachMenu) {
         Dialog(onDismissRequest = { showAttachMenu = false }) {
             Card(
-                shape = RoundedCornerShape(16.dp),
+                shape = RoundedCornerShape(24.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(16.dp)
+                    .fillMaxHeight(0.85f)
+                    .padding(8.dp)
             ) {
                 Column(
-                    modifier = Modifier.padding(16.dp)
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(16.dp)
                 ) {
-                    Text(
-                        text = "Archivos adjuntos (Visión IA)",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(bottom = 12.dp)
-                    )
-                    Text(
-                        text = "Simula cargar una foto para que Riso Vision extraiga datos, traduzca o resuma el contenido:",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-                        modifier = Modifier.padding(bottom = 16.dp)
-                    )
-
-                    // Option 1
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable {
-                                viewModel.attachSampleImage("recibo")
-                                showAttachMenu = false
-                            }
-                            .padding(10.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("🧾", fontSize = 24.sp)
-                        Spacer(modifier = Modifier.width(12.dp))
                         Column {
-                            Text("Recibo de Compra.png", fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                            Text("Extracción de precios, total e impuestos", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
+                            Text(
+                                text = "MCP Conexiones & Herramientas",
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 16.sp,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Text(
+                                text = "Activa y configura conectores del chat local",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                            )
+                        }
+                        IconButton(
+                            onClick = { showAttachMenu = false },
+                            modifier = Modifier.size(28.dp)
+                        ) {
+                            Icon(Icons.Default.Close, contentDescription = "Close", modifier = Modifier.size(18.dp))
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(4.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
 
-                    // Option 2
-                    Row(
+                    Column(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable {
-                                viewModel.attachSampleImage("menu")
-                                showAttachMenu = false
-                            }
-                            .padding(10.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                            .weight(1f)
+                            .verticalScroll(rememberScrollState())
+                            .padding(vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
-                        Text("🍽️", fontSize = 24.sp)
-                        Spacer(modifier = Modifier.width(12.dp))
+                        // SECTION 1: MCP EMAIL
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text("📬", fontSize = 18.sp)
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Column {
+                                            Text("Conector MCP Correo (IMAP/SMTP)", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                            Text("Sincroniza y redacta emails desde el chat", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
+                                        }
+                                    }
+                                    Switch(
+                                        checked = mcpEmailEnabled,
+                                        onCheckedChange = { isChecked ->
+                                            viewModel.updateSetting("mcp_email_enabled", if (isChecked) "true" else "false")
+                                        },
+                                        modifier = Modifier.scale(0.75f)
+                                    )
+                                }
+
+                                if (mcpEmailEnabled) {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))
+                                    Spacer(modifier = Modifier.height(6.dp))
+
+                                    // Render connected accounts
+                                    if (emailAccounts.isEmpty()) {
+                                        Text("No hay cuentas configuradas.", fontSize = 11.sp, color = Color.Red, modifier = Modifier.padding(vertical = 4.dp))
+                                    } else {
+                                        emailAccounts.forEach { acc ->
+                                            val isActive = acc.id == activeEmailAccountId
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(vertical = 2.dp)
+                                                    .background(if (isActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else Color.Transparent, RoundedCornerShape(6.dp))
+                                                    .padding(4.dp),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Column(modifier = Modifier.clickable { viewModel.selectActiveEmailAccount(acc.id) }) {
+                                                    Text(acc.emailAddress, fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                    Text("Active: $isActive • IMAP: ${acc.imapServer}", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
+                                                }
+                                                IconButton(
+                                                    onClick = { viewModel.removeEmailAccount(acc.id) },
+                                                    modifier = Modifier.size(24.dp)
+                                                ) {
+                                                    Text("🗑️", fontSize = 11.sp)
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    TextButton(
+                                        onClick = { showMailManager = !showMailManager },
+                                        contentPadding = PaddingValues(0.dp)
+                                    ) {
+                                        Text(if (showMailManager) "▲ Ocultar formulario" else "▼ Añadir nueva cuenta de correo...", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    }
+
+                                    if (showMailManager) {
+                                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                            OutlinedTextField(
+                                                value = newEmailAddress,
+                                                onValueChange = { newEmailAddress = it },
+                                                label = { Text("Correo", fontSize = 11.sp) },
+                                                placeholder = { Text("ejemplo@gmail.com") },
+                                                shape = RoundedCornerShape(8.dp),
+                                                textStyle = LocalTextStyle.current.copy(fontSize = 11.sp),
+                                                modifier = Modifier.fillMaxWidth(),
+                                                singleLine = true
+                                            )
+                                            OutlinedTextField(
+                                                value = newEmailPass,
+                                                onValueChange = { newEmailPass = it },
+                                                label = { Text("Contraseña / App Pass", fontSize = 11.sp) },
+                                                visualTransformation = PasswordVisualTransformation(),
+                                                shape = RoundedCornerShape(8.dp),
+                                                textStyle = LocalTextStyle.current.copy(fontSize = 11.sp),
+                                                modifier = Modifier.fillMaxWidth(),
+                                                singleLine = true
+                                            )
+                                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                                OutlinedTextField(
+                                                    value = newImapHost,
+                                                    onValueChange = { newImapHost = it },
+                                                    label = { Text("IMAP", fontSize = 11.sp) },
+                                                    placeholder = { Text("imap.gmail.com") },
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    textStyle = LocalTextStyle.current.copy(fontSize = 9.sp),
+                                                    modifier = Modifier.weight(1f),
+                                                    singleLine = true
+                                                )
+                                                OutlinedTextField(
+                                                    value = newSmtpHost,
+                                                    onValueChange = { newSmtpHost = it },
+                                                    label = { Text("SMTP", fontSize = 11.sp) },
+                                                    placeholder = { Text("smtp.gmail.com") },
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    textStyle = LocalTextStyle.current.copy(fontSize = 9.sp),
+                                                    modifier = Modifier.weight(1f),
+                                                    singleLine = true
+                                                )
+                                            }
+                                            Button(
+                                                onClick = {
+                                                    if (newEmailAddress.isNotBlank() && newEmailPass.isNotBlank()) {
+                                                        viewModel.addEmailAccount(
+                                                            emailAddress = newEmailAddress,
+                                                            imapServer = if (newImapHost.isBlank()) "imap.gmail.com" else newImapHost,
+                                                            imapPort = "993",
+                                                            smtpServer = if (newSmtpHost.isBlank()) "smtp.gmail.com" else newSmtpHost,
+                                                            smtpPort = "587",
+                                                            passwordVal = newEmailPass
+                                                        )
+                                                        newEmailAddress = ""
+                                                        newEmailPass = ""
+                                                        newImapHost = ""
+                                                        newSmtpHost = ""
+                                                        showMailManager = false
+                                                    }
+                                                },
+                                                shape = RoundedCornerShape(8.dp),
+                                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                                                modifier = Modifier.fillMaxWidth().height(32.dp),
+                                                contentPadding = PaddingValues(0.dp)
+                                            ) {
+                                                Text("Guardar Cuenta de Correo", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // SECTION 2: MCP GITHUB
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text("🐙", fontSize = 18.sp)
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Column {
+                                            Text("Conector MCP GitHub (PAT / OAuth)", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                            Text("Administra repos y crea issues", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
+                                        }
+                                    }
+                                    Switch(
+                                        checked = mcpGithubEnabled,
+                                        onCheckedChange = { isChecked ->
+                                            viewModel.updateSetting("mcp_github_enabled", if (isChecked) "true" else "false")
+                                        },
+                                        modifier = Modifier.scale(0.75f)
+                                    )
+                                }
+
+                                if (mcpGithubEnabled) {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))
+                                    Spacer(modifier = Modifier.height(6.dp))
+
+                                    OutlinedTextField(
+                                        value = tempGithubUsername,
+                                        onValueChange = {
+                                            tempGithubUsername = it
+                                            viewModel.updateSetting("github_username", it)
+                                        },
+                                        label = { Text("Usuario GitHub", fontSize = 11.sp) },
+                                        shape = RoundedCornerShape(8.dp),
+                                        textStyle = LocalTextStyle.current.copy(fontSize = 11.sp),
+                                        modifier = Modifier.fillMaxWidth(),
+                                        singleLine = true
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    OutlinedTextField(
+                                        value = tempGithubPat,
+                                        onValueChange = {
+                                            tempGithubPat = it
+                                            viewModel.updateSetting("github_pat", it)
+                                        },
+                                        label = { Text("Personal Access Token (PAT)", fontSize = 11.sp) },
+                                        visualTransformation = PasswordVisualTransformation(),
+                                        shape = RoundedCornerShape(8.dp),
+                                        textStyle = LocalTextStyle.current.copy(fontSize = 11.sp),
+                                        modifier = Modifier.fillMaxWidth(),
+                                        singleLine = true
+                                    )
+                                    Spacer(modifier = Modifier.height(6.dp))
+
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        TextButton(
+                                            onClick = {
+                                                oauthGithubWorking = true
+                                                coroutineScope.launch {
+                                                    kotlinx.coroutines.delay(1200)
+                                                    oauthGithubWorking = false
+                                                    tempGithubUsername = "user_github_oauth"
+                                                    tempGithubPat = "gho_simulated_oauth_secret_token"
+                                                    viewModel.updateSetting("github_username", "user_github_oauth")
+                                                    viewModel.updateSetting("github_pat", "gho_simulated_oauth_secret_token")
+                                                }
+                                            },
+                                            modifier = Modifier.height(32.dp),
+                                            contentPadding = PaddingValues(horizontal = 8.dp)
+                                        ) {
+                                            Text("Conectar vía OAuth (Simulado) 🔗", fontSize = 11.sp)
+                                        }
+
+                                        if (oauthGithubWorking) {
+                                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                        } else if (tempGithubPat.startsWith("gho_")) {
+                                            Text("🟢 OAuth Conectado", fontSize = 10.sp, color = Color(0xFF10B981), fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // SECTION 3: MCP GITLAB
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text("🦊", fontSize = 18.sp)
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Column {
+                                            Text("Conector MCP GitLab (PAT / OAuth)", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                            Text("Interactúa con servidores GitLab", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
+                                        }
+                                    }
+                                    Switch(
+                                        checked = mcpGitlabEnabled,
+                                        onCheckedChange = { isChecked ->
+                                            viewModel.updateSetting("mcp_gitlab_enabled", if (isChecked) "true" else "false")
+                                        },
+                                        modifier = Modifier.scale(0.75f)
+                                    )
+                                }
+
+                                if (mcpGitlabEnabled) {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))
+                                    Spacer(modifier = Modifier.height(6.dp))
+
+                                    OutlinedTextField(
+                                        value = tempGitlabUrl,
+                                        onValueChange = {
+                                            tempGitlabUrl = it
+                                            viewModel.updateSetting("gitlab_url", it)
+                                        },
+                                        label = { Text("URL de GitLab", fontSize = 11.sp) },
+                                        placeholder = { Text("https://gitlab.com") },
+                                        shape = RoundedCornerShape(8.dp),
+                                        textStyle = LocalTextStyle.current.copy(fontSize = 11.sp),
+                                        modifier = Modifier.fillMaxWidth(),
+                                        singleLine = true
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    OutlinedTextField(
+                                        value = tempGitlabPat,
+                                        onValueChange = {
+                                            tempGitlabPat = it
+                                            viewModel.updateSetting("gitlab_pat", it)
+                                        },
+                                        label = { Text("Personal Access Token (PAT)", fontSize = 11.sp) },
+                                        visualTransformation = PasswordVisualTransformation(),
+                                        shape = RoundedCornerShape(8.dp),
+                                        textStyle = LocalTextStyle.current.copy(fontSize = 11.sp),
+                                        modifier = Modifier.fillMaxWidth(),
+                                        singleLine = true
+                                    )
+                                    Spacer(modifier = Modifier.height(6.dp))
+
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        TextButton(
+                                            onClick = {
+                                                oauthGitlabWorking = true
+                                                coroutineScope.launch {
+                                                    kotlinx.coroutines.delay(1200)
+                                                    oauthGitlabWorking = false
+                                                    tempGitlabPat = "glo_simulated_oauth_secret_token"
+                                                    viewModel.updateSetting("gitlab_pat", "glo_simulated_oauth_secret_token")
+                                                }
+                                            },
+                                            modifier = Modifier.height(32.dp),
+                                            contentPadding = PaddingValues(horizontal = 8.dp)
+                                        ) {
+                                            Text("Conectar vía OAuth (Simulado) 🔗", fontSize = 11.sp)
+                                        }
+
+                                        if (oauthGitlabWorking) {
+                                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                        } else if (tempGitlabPat.startsWith("glo_")) {
+                                            Text("🟢 OAuth Conectado", fontSize = 10.sp, color = Color(0xFF10B981), fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // SECTION 4: ATTACHMENTS FOR IA VISION
                         Column {
-                            Text("Menú de Restaurant.png", fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                            Text("Traducción del francés y detalles calificados", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
+                            Text(
+                                text = "Archivos de Simulación para IA Visión",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.secondary,
+                                modifier = Modifier.padding(bottom = 6.dp)
+                            )
+                            listOf(
+                                Triple("recibo", "🧾 Recibo de Compra.png", "Extrae precios, total e impuestos"),
+                                Triple("menu", "🍽️ Menú de Restaurant.png", "Traduce platos clásicos franceses"),
+                                Triple("grafico", "📈 Gráfico de Métricas Q3.png", "Análisis cuantitativo de metas")
+                            ).forEach { (id, title, desc) ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 3.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable {
+                                            viewModel.attachSampleImage(id)
+                                            showAttachMenu = false
+                                        }
+                                        .border(BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)), RoundedCornerShape(8.dp))
+                                        .padding(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column {
+                                        Text(title, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        Text(desc, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
+                                    }
+                                }
+                            }
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(4.dp))
-
-                    // Option 3
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable {
-                                viewModel.attachSampleImage("grafico")
-                                showAttachMenu = false
-                            }
-                            .padding(10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("📈", fontSize = 24.sp)
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column {
-                            Text("Gráfico de Métricas Q3.png", fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                            Text("Análisis cuantitativo de metas trimestrales", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(16.dp))
-                    TextButton(
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Button(
                         onClick = { showAttachMenu = false },
-                        modifier = Modifier.align(Alignment.End)
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text("CANCELAR", fontWeight = FontWeight.Bold)
+                        Text("Aceptar", fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -1838,163 +2127,7 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
             }
         }
 
-        // Section 3: Manage Multiple Email Accounts
-        item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = "Tus Cuentas de Correo",
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "Conecta múltiples cuentas IMAP/SMTP y cambia entre ellas libremente.",
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
 
-                    // Existing accounts list
-                    if (emailAccounts.isEmpty()) {
-                        Text(
-                            text = "No tienes cuentas de correo configuradas aún.",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(vertical = 8.dp)
-                        )
-                    } else {
-                        emailAccounts.forEach { acc ->
-                            val isActive = acc.id == activeEmailAccountId
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 4.dp)
-                                    .background(
-                                        if (isActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else Color.Transparent,
-                                        RoundedCornerShape(8.dp)
-                                    )
-                                    .padding(horizontal = 8.dp, vertical = 6.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(8.dp)
-                                            .clip(CircleShape)
-                                            .background(if (isActive) Color(0xFF10B981) else Color.Gray)
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Column {
-                                        Text(acc.emailAddress, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                                        Text("IMAP: ${acc.imapServer} • SMTP: ${acc.smtpServer}", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
-                                    }
-                                }
-                                IconButton(
-                                    onClick = { viewModel.removeEmailAccount(acc.id) },
-                                    modifier = Modifier.size(24.dp)
-                                ) {
-                                    Text("🗑️", fontSize = 14.sp)
-                                }
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(16.dp))
-                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    Text(
-                        text = "Agregar Nueva Cuenta",
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.secondary
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    OutlinedTextField(
-                        value = newEmailAddress,
-                        onValueChange = { newEmailAddress = it },
-                        label = { Text("Correo Electrónico") },
-                        placeholder = { Text("ejemplo@dominio.com") },
-                        shape = RoundedCornerShape(10.dp),
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
-                    )
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    OutlinedTextField(
-                        value = newEmailPass,
-                        onValueChange = { newEmailPass = it },
-                        label = { Text("Contraseña / App Pass") },
-                        visualTransformation = PasswordVisualTransformation(),
-                        shape = RoundedCornerShape(10.dp),
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
-                    )
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(
-                            value = newImapHost,
-                            onValueChange = { newImapHost = it },
-                            label = { Text("IMAP Server") },
-                            placeholder = { Text("imap.gmail.com") },
-                            shape = RoundedCornerShape(10.dp),
-                            modifier = Modifier.weight(1f),
-                            singleLine = true
-                        )
-
-                        OutlinedTextField(
-                            value = newSmtpHost,
-                            onValueChange = { newSmtpHost = it },
-                            label = { Text("SMTP Server") },
-                            placeholder = { Text("smtp.gmail.com") },
-                            shape = RoundedCornerShape(10.dp),
-                            modifier = Modifier.weight(1f),
-                            singleLine = true
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Button(
-                        onClick = {
-                            if (newEmailAddress.isNotBlank() && newEmailPass.isNotBlank()) {
-                                viewModel.addEmailAccount(
-                                    emailAddress = newEmailAddress,
-                                    imapServer = if (newImapHost.isBlank()) "imap.gmail.com" else newImapHost,
-                                    imapPort = "993",
-                                    smtpServer = if (newSmtpHost.isBlank()) "smtp.gmail.com" else newSmtpHost,
-                                    smtpPort = "587",
-                                    passwordVal = newEmailPass
-                                )
-                                // Select instantly if it's the first or default
-                                newEmailAddress = ""
-                                newEmailPass = ""
-                                newImapHost = ""
-                                newSmtpHost = ""
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(8.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.secondary
-                        )
-                    ) {
-                        Text("Añadir Cuenta de Correo", fontWeight = FontWeight.Bold)
-                    }
-                }
-            }
-        }
 
         // Section 4: Connection tester
         item {

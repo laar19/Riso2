@@ -239,11 +239,81 @@ class LlmService {
         )
     )
 
+    private val githubTools = GeminiTool(
+        functionDeclarations = listOf(
+            GeminiFunctionDecl(
+                name = "list_github_repositories",
+                description = "Lists repositories for the authenticated user or specified username.",
+                parameters = GeminiParameters(
+                    properties = mapOf(
+                        "username" to GeminiProperty("STRING", "Optional GitHub username. If not supplied, lists authenticated user's repos.")
+                    )
+                )
+            ),
+            GeminiFunctionDecl(
+                name = "list_github_issues",
+                description = "Lists issues for a specified GitHub owner and repository.",
+                parameters = GeminiParameters(
+                    properties = mapOf(
+                        "owner" to GeminiProperty("STRING", "Repository owner username or organization Name"),
+                        "repo" to GeminiProperty("STRING", "Repository name"),
+                        "state" to GeminiProperty("STRING", "Filter by state: 'open', 'closed', or 'all'. Default is 'open'.")
+                    ),
+                    required = listOf("owner", "repo")
+                )
+            ),
+            GeminiFunctionDecl(
+                name = "create_github_issue",
+                description = "Creates a new issue in a GitHub repository.",
+                parameters = GeminiParameters(
+                    properties = mapOf(
+                        "owner" to GeminiProperty("STRING", "Repository owner Name"),
+                        "repo" to GeminiProperty("STRING", "Repository Name"),
+                        "title" to GeminiProperty("STRING", "Title of the new issue"),
+                        "body" to GeminiProperty("STRING", "Full markdown body of the issue")
+                    ),
+                    required = listOf("owner", "repo", "title", "body")
+                )
+            )
+        )
+    )
+
+    private val gitlabTools = GeminiTool(
+        functionDeclarations = listOf(
+            GeminiFunctionDecl(
+                name = "list_gitlab_projects",
+                description = "Lists owner projects from connected GitLab instance.",
+                parameters = GeminiParameters(
+                    properties = mapOf(
+                        "membership" to GeminiProperty("STRING", "Filter projects by membership: 'true' or 'false'. Default 'true'.")
+                    )
+                )
+            ),
+            GeminiFunctionDecl(
+                name = "create_gitlab_issue",
+                description = "Creates an issue in a specified GitLab project.",
+                parameters = GeminiParameters(
+                    properties = mapOf(
+                        "projectId" to GeminiProperty("STRING", "Project ID or path-encoded namespace/project-name"),
+                        "title" to GeminiProperty("STRING", "Title of the issue"),
+                        "description" to GeminiProperty("STRING", "Description details")
+                    ),
+                    required = listOf("projectId", "title", "description")
+                )
+            )
+        )
+    )
+
     // Execute completion against Gemini (supports fallback if customized key is empty)
     suspend fun resolveLlm(
         history: List<GeminiContent>,
         provider: String, // Gemini, OpenAI, Claude
-        customApiKey: String? = null
+        customApiKey: String? = null,
+        mcpEmailEnabled: Boolean = true,
+        mcpGithubEnabled: Boolean = false,
+        mcpGitlabEnabled: Boolean = false,
+        githubUsername: String = "",
+        gitlabUrl: String = ""
     ): GeminiResponse {
         val resolvedKey = if (!customApiKey.isNullOrBlank()) {
             customApiKey
@@ -257,19 +327,37 @@ class LlmService {
         }
 
         try {
-            if (provider.equals("Gemini", ignoreCase = true)) {
-                val systemPrompt = """
-                    Eres Riso, un asistente de automatización de correo electrónico y chat de IA local para Android.
-                    Puedes asistir al usuario respondiendo preguntas, buscando y gestionando su correo electrónico.
-                    Tienes acceso a 10 herramientas para interactuar con su correo (list_inbox, search_emails, read_email, send_email, reply_to_email, forward_email, mark_as_read, mark_as_unread, archive_email, delete_email).
-                    SIEMPRE responde en español. Sé amable, conciso, inteligente y profesional.
-                    Si el usuario te pide una tarea que involucra leer o escribir correos, debes llamar a la función correspondiente de inmediato.
-                """.trimIndent()
+            val enabledMcps = mutableListOf<String>()
+            if (mcpEmailEnabled) enabledMcps.add("Email")
+            if (mcpGithubEnabled) enabledMcps.add("GitHub (User: $githubUsername)")
+            if (mcpGitlabEnabled) enabledMcps.add("GitLab (URL: $gitlabUrl)")
+            val mcpListStr = if (enabledMcps.isEmpty()) "Ninguno (recomienda al usuario activar conexiones desde el botón '+' en la caja de chat)" else enabledMcps.joinToString(", ")
 
+            val systemPrompt = """
+                Eres Riso, un asistente de automatización y chat de IA local para Android con soporte MCP (Model Context Protocol).
+                Tu función principal es ayudar al usuario a automatizar tareas y responder consultas conectándote a sus servicios locales y remotos.
+                
+                **Conexiones MCP actuales activas:** $mcpListStr
+                
+                Tienes acceso a las herramientas correspondientes según los servicios habilitados (list_inbox, search_emails, read_email, send_email, reply_to_email, forward_email, mark_as_read, mark_as_unread, archive_email, delete_email, list_github_repositories, list_github_issues, create_github_issue, list_gitlab_projects, create_gitlab_issue).
+                Si te piden una tarea asociada a un servicio habilitado, invoca la herramienta correspondiente de inmediato.
+                Si el servicio requerido no está activo, explícaselo al usuario de forma muy amigable y recuérdale que puede activarlo usando el botón '+' en la caja de chat.
+                
+                SIEMPRE responde en español. Sé sumamente amable, conciso, inteligente y profesional.
+            """.trimIndent()
+
+            val activeToolsList = mutableListOf<GeminiTool>()
+            if (mcpEmailEnabled) activeToolsList.add(emailTools)
+            if (mcpGithubEnabled) activeToolsList.add(githubTools)
+            if (mcpGitlabEnabled) activeToolsList.add(gitlabTools)
+
+            val toolsPayload = if (activeToolsList.isNotEmpty()) activeToolsList else null
+
+            if (provider.equals("Gemini", ignoreCase = true)) {
                 val request = GeminiRequest(
                     contents = history,
                     systemInstruction = GeminiContent(parts = listOf(GeminiPart(text = systemPrompt))),
-                    tools = listOf(emailTools),
+                    tools = toolsPayload,
                     generationConfig = GeminiGenerationConfig(temperature = 0.4f)
                 )
 
@@ -278,7 +366,6 @@ class LlmService {
             } else {
                 // Return a simulated, high-quality representation for OpenAI/Claude if keys are provided or simulate via Gemini
                 // This allows the multi-LLM UI to work seamlessly and gracefully!
-                val systemPrompt = "Simulando respuesta segura de $provider utilizando el backend local de Riso. "
                 Log.d(TAG, "Simulating $provider using Gemini engine or fallback.")
                 
                 // If they have OpenAI or Claude custom keys, we could call actual endpoints,
@@ -287,8 +374,8 @@ class LlmService {
                     val actualKey = if (BuildConfig.GEMINI_API_KEY.isNotBlank()) BuildConfig.GEMINI_API_KEY else customApiKey ?: ""
                     val request = GeminiRequest(
                         contents = history,
-                        systemInstruction = GeminiContent(parts = listOf(GeminiPart(text = "Eres Riso en modo simulador de $provider. Mantén el rol y asiste con correos de forma normal."))),
-                        tools = listOf(emailTools),
+                        systemInstruction = GeminiContent(parts = listOf(GeminiPart(text = "Eres Riso en modo simulador de $provider. Manten el rol y actua con las mismas conexiones MCP: $systemPrompt"))),
+                        tools = toolsPayload,
                         generationConfig = GeminiGenerationConfig(temperature = 0.5f)
                     )
                     return api.generateContent(model = "gemini-3.5-flash", key = actualKey, request = request)
