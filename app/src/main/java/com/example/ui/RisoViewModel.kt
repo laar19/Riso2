@@ -75,6 +75,10 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
     val emailAccounts = MutableStateFlow<List<EmailAccount>>(emptyList())
     val activeEmailAccountId = MutableStateFlow<String?>(null)
 
+    // Multiple LLM Profiles / API keys cada uno
+    val llmProfiles = MutableStateFlow<List<LlmProfile>>(emptyList())
+    val activeLlmProfileId = MutableStateFlow<String?>(null)
+
     // STT & Whisper Settings
     private val _sttProvider = MutableStateFlow("Whisper API") // "Whisper API" | "Whisper Local small-v3"
     val sttProvider: StateFlow<String> = _sttProvider.asStateFlow()
@@ -131,6 +135,42 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                 activeEmailAccountId.value = "default_acc"
                 saveEmailAccountsToDb(newList)
                 repository.saveSetting("active_email_account_id", "default_acc")
+            }
+
+            // Load Multi-Model setup
+            val profilesJson = repository.getSetting("llm_profiles_json") ?: ""
+            val activeProfId = repository.getSetting("active_llm_profile_id") ?: ""
+            if (profilesJson.isNotBlank()) {
+                val parsed = parseLlmProfiles(profilesJson)
+                llmProfiles.value = parsed
+                if (parsed.any { it.id == activeProfId }) {
+                    activeLlmProfileId.value = activeProfId
+                } else if (parsed.isNotEmpty()) {
+                    activeLlmProfileId.value = parsed.first().id
+                    repository.saveSetting("active_llm_profile_id", parsed.first().id)
+                }
+            } else {
+                // Seed standard/existing ones
+                val initList = mutableListOf<LlmProfile>()
+                val geminiApiKey = repository.getSetting("gemini_api_key") ?: ""
+                initList.add(LlmProfile("init_gemini", "Gemini Oficial", "Gemini", geminiApiKey))
+                
+                val openaiApiKey = repository.getSetting("openai_api_key") ?: ""
+                if (openaiApiKey.isNotBlank()) {
+                    initList.add(LlmProfile("init_openai", "OpenAI Standard", "OpenAI", openaiApiKey))
+                }
+                
+                val claudeApiKey = repository.getSetting("claude_api_key") ?: ""
+                if (claudeApiKey.isNotBlank()) {
+                    initList.add(LlmProfile("init_claude", "Claude Anthropic", "Claude", claudeApiKey))
+                }
+                
+                llmProfiles.value = initList
+                if (initList.isNotEmpty()) {
+                    activeLlmProfileId.value = initList.first().id
+                    repository.saveSetting("active_llm_profile_id", initList.first().id)
+                    saveLlmProfilesToDb(initList)
+                }
             }
 
             // STT settings
@@ -479,14 +519,22 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                     // Compile history for model (GeminiContent format)
                     val conversation = compileGeminiHistory(sessionId)
                     
-                    // Fetch credentials
-                    val provider = repository.getSetting("llm_provider") ?: "Gemini"
-                    val providerKeyName = when (provider.lowercase()) {
-                        "openai" -> "openai_api_key"
-                        "claude" -> "claude_api_key"
-                        else -> "gemini_api_key"
+                    // Fetch credentials from active profile if available, otherwise legacy setting
+                    val activeId = activeLlmProfileId.value ?: repository.getSetting("active_llm_profile_id") ?: ""
+                    val profiles = llmProfiles.value
+                    val activeProf = profiles.find { it.id == activeId } ?: profiles.firstOrNull()
+
+                    val provider = activeProf?.provider ?: repository.getSetting("llm_provider") ?: "Gemini"
+                    val key = if (activeProf != null) {
+                        activeProf.apiKey
+                    } else {
+                        val providerKeyName = when (provider.lowercase()) {
+                            "openai" -> "openai_api_key"
+                            "claude" -> "claude_api_key"
+                            else -> "gemini_api_key"
+                        }
+                        repository.getSetting(providerKeyName)
                     }
-                    val key = repository.getSetting(providerKeyName)
 
                     val mcpEmailEnabled = repository.getSetting("mcp_email_enabled") != "false"
                     val mcpGithubEnabled = repository.getSetting("mcp_github_enabled") == "true"
@@ -784,9 +832,22 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                 )
             )
 
-            // Re-resolve with Gemini to explain the tool outputs back to the user
-            val provider = repository.getSetting("llm_provider") ?: "Gemini"
-            val key = repository.getSetting(if (provider.lowercase() == "openai") "openai_api_key" else "gemini_api_key")
+            // Re-resolve with selected LLM model profile to explain the tool outputs back to the user
+            val activeId = activeLlmProfileId.value ?: repository.getSetting("active_llm_profile_id") ?: ""
+            val profiles = llmProfiles.value
+            val activeProf = profiles.find { it.id == activeId } ?: profiles.firstOrNull()
+
+            val provider = activeProf?.provider ?: repository.getSetting("llm_provider") ?: "Gemini"
+            val key = if (activeProf != null) {
+                activeProf.apiKey
+            } else {
+                val providerKeyName = when (provider.lowercase()) {
+                    "openai" -> "openai_api_key"
+                    "claude" -> "claude_api_key"
+                    else -> "gemini_api_key"
+                }
+                repository.getSetting(providerKeyName)
+            }
 
             val mcpEmailEnabled = repository.getSetting("mcp_email_enabled") != "false"
             val mcpGithubEnabled = repository.getSetting("mcp_github_enabled") == "true"
@@ -851,6 +912,95 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun parseLlmProfiles(json: String): List<LlmProfile> {
+        val list = mutableListOf<LlmProfile>()
+        try {
+            val array = org.json.JSONArray(json)
+            for (i in 0 until array.length()) {
+                val obj = array.getJSONObject(i)
+                list.add(
+                    LlmProfile(
+                        id = obj.getString("id"),
+                        name = obj.getString("name"),
+                        provider = obj.getString("provider"),
+                        apiKey = obj.getString("apiKey")
+                    )
+                )
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error parsing llm profiles json", e)
+        }
+        return list
+    }
+
+    fun saveLlmProfilesToDb(list: List<LlmProfile>) {
+        try {
+            val array = org.json.JSONArray()
+            for (prof in list) {
+                val obj = org.json.JSONObject()
+                obj.put("id", prof.id)
+                obj.put("name", prof.name)
+                obj.put("provider", prof.provider)
+                obj.put("apiKey", prof.apiKey)
+                array.put(obj)
+            }
+            viewModelScope.launch {
+                repository.saveSetting("llm_profiles_json", array.toString())
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error saving llm profiles json", e)
+        }
+    }
+
+    fun addLlmProfile(name: String, provider: String, apiKey: String) {
+        if (name.isBlank() || apiKey.isBlank()) return
+        val newProfile = LlmProfile(
+            id = UUID.randomUUID().toString(),
+            name = name,
+            provider = provider,
+            apiKey = apiKey
+        )
+        val updatedList = llmProfiles.value + newProfile
+        llmProfiles.value = updatedList
+        saveLlmProfilesToDb(updatedList)
+        if (activeLlmProfileId.value == null || activeLlmProfileId.value == "") {
+            selectActiveLlmProfile(newProfile.id)
+        }
+    }
+
+    fun removeLlmProfile(profileId: String) {
+        val updatedList = llmProfiles.value.filter { it.id != profileId }
+        llmProfiles.value = updatedList
+        saveLlmProfilesToDb(updatedList)
+        if (activeLlmProfileId.value == profileId) {
+            val nextProfile = updatedList.firstOrNull()
+            if (nextProfile != null) {
+                selectActiveLlmProfile(nextProfile.id)
+            } else {
+                activeLlmProfileId.value = null
+                viewModelScope.launch {
+                    repository.saveSetting("active_llm_profile_id", "")
+                }
+            }
+        }
+    }
+
+    fun selectActiveLlmProfile(profileId: String) {
+        activeLlmProfileId.value = profileId
+        viewModelScope.launch {
+            repository.saveSetting("active_llm_profile_id", profileId)
+            // Synchronize legacy `llm_provider` label to keep other tabs working
+            val prof = llmProfiles.value.find { it.id == profileId }
+            if (prof != null) {
+                repository.saveSetting("llm_provider", prof.provider)
+            }
+        }
+    }
+
+    fun attachCustomFile(name: String) {
+        _attachedImage.value = name
+    }
+
     private val moshi = Moshi.Builder().add(KotlinJsonAdapterFactory()).build()
 
     private fun RisoEmail.toMap(): Map<String, Any?> {
@@ -866,3 +1016,10 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 }
+
+data class LlmProfile(
+    val id: String,
+    val name: String,
+    val provider: String, // "Gemini" | "OpenAI" | "Claude"
+    val apiKey: String
+)

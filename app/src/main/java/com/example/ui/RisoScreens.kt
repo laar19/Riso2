@@ -47,6 +47,10 @@ import androidx.compose.foundation.verticalScroll
 import com.example.data.model.ChatMessage
 import com.example.data.model.PendingAction
 import com.example.service.email.RisoEmail
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import android.net.Uri
+import android.graphics.Bitmap
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -227,7 +231,7 @@ fun RisoMainScreen(
                     HorizontalDivider(color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.08f))
                     Spacer(modifier = Modifier.height(12.dp))
                     
-                    val themeMode = settings["theme_mode"] ?: "dark"
+                    val themeMode = settings["theme_mode"] ?: "light"
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -243,17 +247,22 @@ fun RisoMainScreen(
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                         }
-                        Switch(
-                            checked = themeMode == "light",
-                            onCheckedChange = { isLight ->
-                                viewModel.updateSetting("theme_mode", if (isLight) "light" else "dark")
-                            },
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = MaterialTheme.colorScheme.primary,
-                                checkedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)
-                            ),
-                            modifier = Modifier.scale(0.8f)
-                        )
+                        Box(
+                            modifier = Modifier.size(54.dp, 34.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Switch(
+                                checked = themeMode == "light",
+                                onCheckedChange = { isLight ->
+                                    viewModel.updateSetting("theme_mode", if (isLight) "light" else "dark")
+                                },
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = MaterialTheme.colorScheme.primary,
+                                    checkedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)
+                                ),
+                                modifier = Modifier.scale(0.8f)
+                            )
+                        }
                     }
                     
                     Spacer(modifier = Modifier.height(4.dp))
@@ -343,6 +352,31 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
     var textInput by remember { mutableStateOf("") }
     var showAttachMenu by remember { mutableStateOf(false) }
     var showModelSelector by remember { mutableStateOf(false) }
+
+    // Launcher integrations for physical device testing as requested
+    val galleryLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            viewModel.attachCustomFile("Galería: ${uri.lastPathSegment ?: "imagen.png"}")
+        }
+    }
+
+    val cameraLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicturePreview()
+    ) { bitmap: Bitmap? ->
+        if (bitmap != null) {
+            viewModel.attachCustomFile("Cámara: foto_capturada.png")
+        }
+    }
+
+    val filePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            viewModel.attachCustomFile("Archivo: ${uri.lastPathSegment ?: "documento.pdf"}")
+        }
+    }
 
     var tempGithubUsername by remember(settings) { mutableStateOf(settings["github_username"] ?: "") }
     var tempGithubPat by remember(settings) { mutableStateOf(settings["github_pat"] ?: "") }
@@ -703,19 +737,24 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
                 color = if (planningMode) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
                 modifier = Modifier.padding(end = 6.dp)
             )
-            Switch(
-                checked = planningMode,
-                onCheckedChange = { viewModel.togglePlanningMode() },
-                colors = SwitchDefaults.colors(
-                    checkedThumbColor = MaterialTheme.colorScheme.tertiary,
-                    checkedTrackColor = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.3f),
-                    uncheckedThumbColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
-                    uncheckedTrackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f),
-                ),
-                modifier = Modifier
-                    .scale(0.7f)
-                    .testTag("toggle_planning_mode_chat")
-            )
+            Box(
+                modifier = Modifier.size(54.dp, 34.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Switch(
+                    checked = planningMode,
+                    onCheckedChange = { viewModel.togglePlanningMode() },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = MaterialTheme.colorScheme.tertiary,
+                        checkedTrackColor = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.3f),
+                        uncheckedThumbColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                        uncheckedTrackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f),
+                    ),
+                    modifier = Modifier
+                        .scale(0.7f)
+                        .testTag("toggle_planning_mode_chat")
+                )
+            }
         }
 
         // Bottom Input Row
@@ -762,6 +801,16 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.padding(end = 12.dp) // Beautiful border on the safe right side
                     ) {
+                        // Plus (+) attachment action for convenient bottom-right trigger!
+                        IconButton(
+                            onClick = { showAttachMenu = true },
+                            modifier = Modifier.size(36.dp).testTag("chat_attach_button_right")
+                        ) {
+                            Text("➕", fontSize = 16.sp)
+                        }
+
+                        Spacer(modifier = Modifier.width(4.dp))
+
                         // Microphone button integrated directly inside the text input
                         IconButton(
                             onClick = {
@@ -886,13 +935,22 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
                                             Text("Sincroniza y redacta emails desde el chat", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
                                         }
                                     }
-                                    Switch(
-                                        checked = mcpEmailEnabled,
-                                        onCheckedChange = { isChecked ->
-                                            viewModel.updateSetting("mcp_email_enabled", if (isChecked) "true" else "false")
-                                        },
-                                        modifier = Modifier.scale(0.75f)
-                                    )
+                                    Box(
+                                        modifier = Modifier.size(54.dp, 34.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Switch(
+                                            checked = mcpEmailEnabled,
+                                            onCheckedChange = { isChecked ->
+                                                viewModel.updateSetting("mcp_email_enabled", if (isChecked) "true" else "false")
+                                            },
+                                            colors = SwitchDefaults.colors(
+                                                checkedThumbColor = MaterialTheme.colorScheme.primary,
+                                                checkedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f),
+                                            ),
+                                            modifier = Modifier.scale(0.75f).testTag("toggle_mcp_email")
+                                        )
+                                    }
                                 }
 
                                 if (mcpEmailEnabled) {
@@ -1031,13 +1089,22 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
                                             Text("Administra repos y crea issues", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
                                         }
                                     }
-                                    Switch(
-                                        checked = mcpGithubEnabled,
-                                        onCheckedChange = { isChecked ->
-                                            viewModel.updateSetting("mcp_github_enabled", if (isChecked) "true" else "false")
-                                        },
-                                        modifier = Modifier.scale(0.75f)
-                                    )
+                                    Box(
+                                        modifier = Modifier.size(54.dp, 34.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Switch(
+                                            checked = mcpGithubEnabled,
+                                            onCheckedChange = { isChecked ->
+                                                viewModel.updateSetting("mcp_github_enabled", if (isChecked) "true" else "false")
+                                            },
+                                            colors = SwitchDefaults.colors(
+                                                checkedThumbColor = MaterialTheme.colorScheme.primary,
+                                                checkedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f),
+                                            ),
+                                            modifier = Modifier.scale(0.75f).testTag("toggle_mcp_github")
+                                        )
+                                    }
                                 }
 
                                 if (mcpGithubEnabled) {
@@ -1125,13 +1192,22 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
                                             Text("Interactúa con servidores GitLab", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
                                         }
                                     }
-                                    Switch(
-                                        checked = mcpGitlabEnabled,
-                                        onCheckedChange = { isChecked ->
-                                            viewModel.updateSetting("mcp_gitlab_enabled", if (isChecked) "true" else "false")
-                                        },
-                                        modifier = Modifier.scale(0.75f)
-                                    )
+                                    Box(
+                                        modifier = Modifier.size(54.dp, 34.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Switch(
+                                            checked = mcpGitlabEnabled,
+                                            onCheckedChange = { isChecked ->
+                                                viewModel.updateSetting("mcp_gitlab_enabled", if (isChecked) "true" else "false")
+                                            },
+                                            colors = SwitchDefaults.colors(
+                                                checkedThumbColor = MaterialTheme.colorScheme.primary,
+                                                checkedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f),
+                                            ),
+                                            modifier = Modifier.scale(0.75f).testTag("toggle_mcp_gitlab")
+                                        )
+                                    }
                                 }
 
                                 if (mcpGitlabEnabled) {
@@ -1194,6 +1270,99 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
                                         } else if (tempGitlabPat.startsWith("glo_")) {
                                             Text("🟢 OAuth Conectado", fontSize = 10.sp, color = Color(0xFF10B981), fontWeight = FontWeight.Bold)
                                         }
+                                    }
+                                }
+                            }
+                        }
+
+                        // SECTION: ADJUNTAR DESDE TU TELÉFONO (REAL DEVICE LAUNCHERS)
+                        Column {
+                            Text(
+                                text = "Adjuntar desde tu Teléfono",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(bottom = 6.dp)
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                // Camera Option
+                                Card(
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.06f)),
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clickable {
+                                            try {
+                                                cameraLauncher.launch(null)
+                                            } catch (e: Exception) {
+                                                viewModel.attachCustomFile("Foto Simulada (Cámara)")
+                                            }
+                                            showAttachMenu = false
+                                        }
+                                        .padding(2.dp)
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(10.dp).fillMaxWidth(),
+                                        horizontalAlignment = Alignment.CenterHorizontally
+                                    ) {
+                                        Text("📸", fontSize = 20.sp)
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text("Cámara", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+
+                                // Gallery Option
+                                Card(
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.06f)),
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clickable {
+                                            try {
+                                                galleryLauncher.launch("image/*")
+                                            } catch (e: Exception) {
+                                                viewModel.attachCustomFile("Imagen Simulada (Galería)")
+                                            }
+                                            showAttachMenu = false
+                                        }
+                                        .padding(2.dp)
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(10.dp).fillMaxWidth(),
+                                        horizontalAlignment = Alignment.CenterHorizontally
+                                    ) {
+                                        Text("🖼️", fontSize = 20.sp)
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text("Galería", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+
+                                // File Option
+                                Card(
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.06f)),
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clickable {
+                                            try {
+                                                filePickerLauncher.launch("*/*")
+                                            } catch (e: Exception) {
+                                                viewModel.attachCustomFile("Documento Simulado")
+                                            }
+                                            showAttachMenu = false
+                                        }
+                                        .padding(2.dp)
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(10.dp).fillMaxWidth(),
+                                        horizontalAlignment = Alignment.CenterHorizontally
+                                    ) {
+                                        Text("📂", fontSize = 20.sp)
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text("Archivo", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                     }
                                 }
                             }
@@ -2037,6 +2206,220 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
                             .testTag("whisper_key_input"),
                         singleLine = true
                     )
+                }
+            }
+        }
+
+        // SECTION: MULTI-MODEL PROFILE MANAGEMENT
+        item {
+            val llmProfiles by viewModel.llmProfiles.collectAsStateWithLifecycle()
+            val activeLlmProfileId by viewModel.activeLlmProfileId.collectAsStateWithLifecycle()
+
+            var newProfileName by remember { mutableStateOf("") }
+            var newProfileProvider by remember { mutableStateOf("Gemini") }
+            var newProfileKey by remember { mutableStateOf("") }
+            var showAddNewForm by remember { mutableStateOf(false) }
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "Múltiples Modelos y API Keys (OpenAI, Anthropic, Gemini, etc.)",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Agrega y administra múltiples claves API para cada proveedor, y elige cuál quieres usar en cada sesión.",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // List existing profiles
+                    if (llmProfiles.isEmpty()) {
+                        Text(
+                            text = "No hay perfiles de modelos adicionales. Usa el formulario de abajo para agregar uno.",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        )
+                    } else {
+                        llmProfiles.forEach { profile ->
+                            val isActive = profile.id == activeLlmProfileId
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp)
+                                    .clickable { viewModel.selectActiveLlmProfile(profile.id) },
+                                colors = CardDefaults.cardColors(
+                                    containerColor = if (isActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.05f) 
+                                                     else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
+                                ),
+                                border = if (isActive) BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else null
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        RadioButton(
+                                            selected = isActive,
+                                            onClick = { viewModel.selectActiveLlmProfile(profile.id) },
+                                            colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colorScheme.primary)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Column {
+                                            Text(
+                                                text = profile.name,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 13.sp,
+                                                color = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                            )
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Text(
+                                                    text = profile.provider,
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                                                    modifier = Modifier
+                                                        .background(
+                                                            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f),
+                                                            RoundedCornerShape(4.dp)
+                                                        )
+                                                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Text(
+                                                    text = if (profile.apiKey.length > 8) "...${profile.apiKey.takeLast(6)}" else "***",
+                                                    fontSize = 10.sp,
+                                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                                                )
+                                            }
+                                        }
+                                    }
+                                    IconButton(
+                                        onClick = { viewModel.removeLlmProfile(profile.id) }
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Delete,
+                                            contentDescription = "Borrar modelo",
+                                            tint = MaterialTheme.colorScheme.error,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    if (!showAddNewForm) {
+                        Button(
+                            onClick = { showAddNewForm = true },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth().testTag("show_add_model_form")
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = "Suma", modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Agregar Modelo / API Key", fontSize = 12.sp)
+                        }
+                    } else {
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                            modifier = Modifier
+                                .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.02f), RoundedCornerShape(12.dp))
+                                .padding(12.dp)
+                        ) {
+                            Text("Nuevo Perfil de Modelo", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
+
+                            OutlinedTextField(
+                                value = newProfileName,
+                                onValueChange = { newProfileName = it },
+                                label = { Text("Nombre descriptivo (ej: OpenAI Trabajo)") },
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.fillMaxWidth().testTag("new_model_name_input"),
+                                singleLine = true
+                            )
+
+                            // Provider Selector Row
+                            Text("Proveedor:", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                listOf("Gemini", "OpenAI", "Claude").forEach { prov ->
+                                    val isSelected = newProfileProvider == prov
+                                    Card(
+                                        colors = CardDefaults.cardColors(
+                                            containerColor = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.1f) 
+                                                             else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                        ),
+                                        border = if (isSelected) BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else null,
+                                        modifier = Modifier
+                                            .weight(1.0f)
+                                            .clickable { newProfileProvider = prov }
+                                    ) {
+                                        Box(
+                                            modifier = Modifier.padding(8.dp).fillMaxWidth(),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(prov, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                }
+                            }
+
+                            OutlinedTextField(
+                                value = newProfileKey,
+                                onValueChange = { newProfileKey = it },
+                                label = { Text("API Key") },
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.fillMaxWidth().testTag("new_model_key_input"),
+                                singleLine = true
+                            )
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                OutlinedButton(
+                                    onClick = { showAddNewForm = false },
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text("Cancelar", fontSize = 12.sp)
+                                }
+
+                                Button(
+                                    onClick = {
+                                        if (newProfileName.isNotBlank() && newProfileKey.isNotBlank()) {
+                                            viewModel.addLlmProfile(newProfileName, newProfileProvider, newProfileKey)
+                                            newProfileName = ""
+                                            newProfileKey = ""
+                                            showAddNewForm = false
+                                        }
+                                    },
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.weight(1f).testTag("save_model_button")
+                                ) {
+                                    Text("Guardar", fontSize = 12.sp)
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
