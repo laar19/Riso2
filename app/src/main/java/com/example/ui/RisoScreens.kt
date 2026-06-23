@@ -1275,6 +1275,141 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
                             }
                         }
 
+                        // INTERNET SEARCH & SCRAPER ENGINE CARD
+                        val internetSearchEnabled = settings["internet_search_enabled"] == "true"
+                        val searchProvider = settings["search_provider"] ?: "google_grounding"
+
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                                        Text("🛰️", fontSize = 18.sp)
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Column {
+                                            Text("Búsqueda en Internet & Raspado", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                            Text("Permite a Riso consultar detalles actualizados en tiempo real", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
+                                        }
+                                    }
+                                    Box(
+                                        modifier = Modifier.size(54.dp, 34.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Switch(
+                                            checked = internetSearchEnabled,
+                                            onCheckedChange = { isChecked ->
+                                                viewModel.updateSetting("internet_search_enabled", if (isChecked) "true" else "false")
+                                            },
+                                            colors = SwitchDefaults.colors(
+                                                checkedThumbColor = MaterialTheme.colorScheme.primary,
+                                                checkedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f),
+                                            ),
+                                            modifier = Modifier.scale(0.75f).testTag("toggle_internet_search")
+                                        )
+                                    }
+                                }
+
+                                if (internetSearchEnabled) {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                                    Spacer(modifier = Modifier.height(6.dp))
+
+                                    Text(
+                                        text = "Proveedor de Búsqueda:",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.padding(bottom = 6.dp)
+                                    )
+
+                                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        // 1. Google Search Grounding
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .clickable { viewModel.updateSetting("search_provider", "google_grounding") }
+                                                .background(if (searchProvider == "google_grounding") MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else Color.Transparent)
+                                                .padding(6.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            RadioButton(
+                                                selected = searchProvider == "google_grounding",
+                                                onClick = { viewModel.updateSetting("search_provider", "google_grounding") },
+                                                colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colorScheme.primary)
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Column {
+                                                Text("Google Grounding (Gemini)", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                                Text("Gratuito y nativo con tu Gemini API Key.", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
+                                            }
+                                        }
+
+                                        // 2. DuckDuckGo Scrapper
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .clickable { viewModel.updateSetting("search_provider", "duckduckgo_scraper") }
+                                                .background(if (searchProvider == "duckduckgo_scraper") MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else Color.Transparent)
+                                                .padding(6.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            RadioButton(
+                                                selected = searchProvider == "duckduckgo_scraper",
+                                                onClick = { viewModel.updateSetting("search_provider", "duckduckgo_scraper") },
+                                                colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colorScheme.primary)
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Column {
+                                                Text("DuckDuckGo HTML Scraper (Libre)", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                                Text("Raspador en tiempo real anónimo, sin API key.", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
+                                            }
+                                        }
+
+                                        // 3. Brave Search API
+                                        val hasBraveKey = !settings["brave_search_api_key"].isNullOrBlank()
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .clickable { viewModel.updateSetting("search_provider", "brave") }
+                                                .background(if (searchProvider == "brave") MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else Color.Transparent)
+                                                .padding(6.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            RadioButton(
+                                                selected = searchProvider == "brave",
+                                                onClick = { viewModel.updateSetting("search_provider", "brave") },
+                                                colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colorScheme.primary)
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Column {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Text("Brave Search API", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                                    Spacer(modifier = Modifier.width(6.dp))
+                                                    Text(
+                                                        text = if (hasBraveKey) "🔑 Configurado" else "⚠️ Falta API Key",
+                                                        fontSize = 8.sp,
+                                                        color = if (hasBraveKey) Color(0xFF10B981) else Color.Red,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                }
+                                                Text("Consulta estructurada usando tu clave API de Brave.", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         // SECTION: ADJUNTAR DESDE TU TELÉFONO (REAL DEVICE LAUNCHERS)
                         Column {
                             Text(
@@ -1998,6 +2133,7 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
     var openaiKey by remember { mutableStateOf("") }
     var claudeKey by remember { mutableStateOf("") }
     var whisperKey by remember { mutableStateOf("") }
+    var braveKey by remember { mutableStateOf("") }
 
     // New email account addition fields temp state
     var newEmailAddress by remember { mutableStateOf("") }
@@ -2014,6 +2150,7 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
             openaiKey = settings["openai_api_key"] ?: ""
             claudeKey = settings["claude_api_key"] ?: ""
             whisperKey = settings["whisper_api_key"] ?: ""
+            braveKey = settings["brave_search_api_key"] ?: ""
         }
     }
 
@@ -2204,6 +2341,25 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("whisper_key_input"),
+                        singleLine = true
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Brave Search API Key
+                    OutlinedTextField(
+                        value = braveKey,
+                        onValueChange = {
+                            braveKey = it
+                            viewModel.updateSetting("brave_search_api_key", it)
+                        },
+                        label = { Text("Brave Search API Key") },
+                        placeholder = { Text("BSA-...") },
+                        shape = RoundedCornerShape(12.dp),
+                        visualTransformation = PasswordVisualTransformation(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("brave_search_key_input"),
                         singleLine = true
                     )
                 }

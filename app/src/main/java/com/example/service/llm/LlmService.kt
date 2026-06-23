@@ -54,7 +54,8 @@ data class GeminiFunctionResponse(
 
 @JsonClass(generateAdapter = true)
 data class GeminiTool(
-    val functionDeclarations: List<GeminiFunctionDecl>
+    val functionDeclarations: List<GeminiFunctionDecl>? = null,
+    val googleSearchRetrieval: Map<String, Any?>? = null
 )
 
 @JsonClass(generateAdapter = true)
@@ -304,6 +305,21 @@ class LlmService {
         )
     )
 
+    private val webSearchTool = GeminiTool(
+        functionDeclarations = listOf(
+            GeminiFunctionDecl(
+                name = "web_search",
+                description = "Busca información en tiempo real en internet sobre noticias, eventos recientes, precios o detalles no presentes en tu entrenamiento.",
+                parameters = GeminiParameters(
+                    properties = mapOf(
+                        "query" to GeminiProperty("STRING", "La consulta o palabras clave para buscar en internet")
+                    ),
+                    required = listOf("query")
+                )
+            )
+        )
+    )
+
     private fun isKeyInvalidOrPlaceholder(key: String?): Boolean {
         if (key.isNullOrBlank()) return true
         val trimmed = key.trim()
@@ -321,7 +337,9 @@ class LlmService {
         mcpGithubEnabled: Boolean = false,
         mcpGitlabEnabled: Boolean = false,
         githubUsername: String = "",
-        gitlabUrl: String = ""
+        gitlabUrl: String = "",
+        internetSearchEnabled: Boolean = false,
+        searchProvider: String = "google_grounding"
     ): GeminiResponse {
         val resolvedKey = if (!customApiKey.isNullOrBlank()) {
             customApiKey
@@ -342,15 +360,20 @@ class LlmService {
             if (mcpGitlabEnabled) enabledMcps.add("GitLab (URL: $gitlabUrl)")
             val mcpListStr = if (enabledMcps.isEmpty()) "Ninguno (recomienda al usuario activar conexiones desde el botón '+' en la caja de chat)" else enabledMcps.joinToString(", ")
 
+            val searchInfoStr = if (internetSearchEnabled) "Habilitada (Proveedor: $searchProvider)" else "Desactivada"
+
             val systemPrompt = """
                 Eres Riso, un asistente de automatización y chat de IA local para Android con soporte MCP (Model Context Protocol).
                 Tu función principal es ayudar al usuario a automatizar tareas y responder consultas conectándote a sus servicios locales y remotos.
                 
                 **Conexiones MCP actuales activas:** $mcpListStr
+                **Búsqueda en Internet:** $searchInfoStr
                 
                 Tienes acceso a las herramientas correspondientes según los servicios habilitados (list_inbox, search_emails, read_email, send_email, reply_to_email, forward_email, mark_as_read, mark_as_unread, archive_email, delete_email, list_github_repositories, list_github_issues, create_github_issue, list_gitlab_projects, create_gitlab_issue).
                 Si te piden una tarea asociada a un servicio habilitado, invoca la herramienta correspondiente de inmediato.
                 Si el servicio requerido no está activo, explícaselo al usuario de forma muy amigable y recuérdale que puede activarlo usando el botón '+' en la caja de chat.
+                
+                ${if (internetSearchEnabled && searchProvider != "google_grounding") "Si necesitas buscar información externa en tiempo real, realiza una llamada a la herramienta 'web_search' pasándole un query de búsqueda inteligente." else ""}
                 
                 SIEMPRE responde en español. Sé sumamente amable, conciso, inteligente y profesional.
             """.trimIndent()
@@ -359,6 +382,24 @@ class LlmService {
             if (mcpEmailEnabled) activeToolsList.add(emailTools)
             if (mcpGithubEnabled) activeToolsList.add(githubTools)
             if (mcpGitlabEnabled) activeToolsList.add(gitlabTools)
+
+            if (internetSearchEnabled) {
+                if (searchProvider == "google_grounding") {
+                    // Inject Gemini's native Google Search Grounding config
+                    activeToolsList.add(
+                        GeminiTool(
+                            googleSearchRetrieval = mapOf(
+                                "dynamicRetrievalConfig" to mapOf(
+                                    "mode" to "MODE_DYNAMIC",
+                                    "dynamicThreshold" to 0.1
+                                )
+                            )
+                        )
+                    )
+                } else {
+                    activeToolsList.add(webSearchTool)
+                }
+            }
 
             val toolsPayload = if (activeToolsList.isNotEmpty()) activeToolsList else null
 

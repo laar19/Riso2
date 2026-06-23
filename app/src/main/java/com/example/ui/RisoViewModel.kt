@@ -28,6 +28,7 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = RisoRepository(database.risoDao())
     private val emailService = EmailService(repository)
     private val llmService = LlmService()
+    private val webSearchService = com.example.service.search.WebSearchService()
 
     // Observable States
     val sessions: StateFlow<List<ChatSession>> = repository.allSessions
@@ -541,6 +542,8 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                     val mcpGitlabEnabled = repository.getSetting("mcp_gitlab_enabled") == "true"
                     val githubUsername = repository.getSetting("github_username") ?: ""
                     val gitlabUrl = repository.getSetting("gitlab_url") ?: "https://gitlab.com"
+                    val internetSearchEnabled = repository.getSetting("internet_search_enabled") == "true"
+                    val searchProvider = repository.getSetting("search_provider") ?: "google_grounding"
 
                     // Call LLM Resolver with tools
                     val response = llmService.resolveLlm(
@@ -551,7 +554,9 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                         mcpGithubEnabled = mcpGithubEnabled,
                         mcpGitlabEnabled = mcpGitlabEnabled,
                         githubUsername = githubUsername,
-                        gitlabUrl = gitlabUrl
+                        gitlabUrl = gitlabUrl,
+                        internetSearchEnabled = internetSearchEnabled,
+                        searchProvider = searchProvider
                     )
                     processLlmResponse(sessionId, response)
                 }
@@ -809,6 +814,23 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                         "description" to desc
                     )
                 }
+                "web_search" -> {
+                    val query = args["query"]?.toString() ?: ""
+                    val providerState = repository.getSetting("search_provider") ?: "google_grounding"
+                    if (providerState == "brave") {
+                        val apiKey = repository.getSetting("brave_search_api_key") ?: ""
+                        if (apiKey.isBlank()) {
+                            mapOf("error" to "La clave API para Brave Search no está configurada, escribe la clave en Ajustes.")
+                        } else {
+                            val results = webSearchService.searchBrave(query, apiKey)
+                            mapOf("success" to true, "query" to query, "results" to results.map { mapOf("title" to it.title, "url" to it.url, "snippet" to it.snippet) })
+                        }
+                    } else {
+                        // DuckDuckGo free scraper fallback
+                        val results = webSearchService.searchDuckDuckGo(query)
+                        mapOf("success" to true, "query" to query, "results" to results.map { mapOf("title" to it.title, "url" to it.url, "snippet" to it.snippet) })
+                    }
+                }
                 else -> mapOf("error" to "Función desconocida `$name`")
             }
 
@@ -854,6 +876,8 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
             val mcpGitlabEnabled = repository.getSetting("mcp_gitlab_enabled") == "true"
             val githubUsername = repository.getSetting("github_username") ?: ""
             val gitlabUrl = repository.getSetting("gitlab_url") ?: "https://gitlab.com"
+            val internetSearchEnabled = repository.getSetting("internet_search_enabled") == "true"
+            val searchProvider = repository.getSetting("search_provider") ?: "google_grounding"
 
             val nextResponse = llmService.resolveLlm(
                 history = conversation,
@@ -863,7 +887,9 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                 mcpGithubEnabled = mcpGithubEnabled,
                 mcpGitlabEnabled = mcpGitlabEnabled,
                 githubUsername = githubUsername,
-                gitlabUrl = gitlabUrl
+                gitlabUrl = gitlabUrl,
+                internetSearchEnabled = internetSearchEnabled,
+                searchProvider = searchProvider
             )
             
             processLlmResponse(sessionId, nextResponse)
