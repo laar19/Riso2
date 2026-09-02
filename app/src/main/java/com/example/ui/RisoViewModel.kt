@@ -543,7 +543,7 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                     val githubUsername = repository.getSetting("github_username") ?: ""
                     val gitlabUrl = repository.getSetting("gitlab_url") ?: "https://gitlab.com"
                     val internetSearchEnabled = repository.getSetting("internet_search_enabled") == "true"
-                    val searchProvider = repository.getSetting("search_provider") ?: "google_grounding"
+                    val searchProvider = repository.getSetting("search_provider") ?: "duckduckgo_scraper"
 
                     // Call LLM Resolver with tools
                     val response = llmService.resolveLlm(
@@ -558,7 +558,7 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                         internetSearchEnabled = internetSearchEnabled,
                         searchProvider = searchProvider
                     )
-                    processLlmResponse(sessionId, response)
+                    processLlmResponse(sessionId, response, depth = 0)
                 }
 
             } catch (e: Throwable) {
@@ -577,13 +577,13 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // Process Response candidates and check for tool functionCall
-    private suspend fun processLlmResponse(sessionId: String, response: GeminiResponse) {
+    private suspend fun processLlmResponse(sessionId: String, response: GeminiResponse, depth: Int = 0) {
         val candidate = response.candidates?.firstOrNull() ?: return
         val textResponse = candidate.content.parts.firstOrNull { it.text != null }?.text
         val functionCall = candidate.content.parts.firstOrNull { it.functionCall != null }?.functionCall
 
         if (functionCall != null) {
-            handleFunctionCalling(sessionId, functionCall)
+            handleFunctionCalling(sessionId, functionCall, depth = depth)
         } else if (textResponse != null) {
             repository.addMessage(
                 ChatMessage(
@@ -604,7 +604,7 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // Handles the 10 core email tasks and enforces the Planning Mode safety shield
-    private suspend fun handleFunctionCalling(sessionId: String, call: GeminiFunctionCall) {
+    private suspend fun handleFunctionCalling(sessionId: String, call: GeminiFunctionCall, depth: Int = 0) {
         val fName = call.name
         val args = call.args ?: emptyMap()
         Log.d(TAG, "Function Call Invoked: $fName, Args: $args")
@@ -647,7 +647,7 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
             )
         } else {
             // Direct execution mode: runs immediately
-            executeFunction(sessionId, fName, args)
+            executeFunction(sessionId, call, depth = depth)
         }
     }
 
@@ -669,7 +669,7 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
 
             // Execute function call using saved arguments
             val argsMap = moshi.adapter(Map::class.java).fromJson(action.argumentsJson) as? Map<String, Any?> ?: emptyMap()
-            executeFunction(sessionId, action.functionName, argsMap)
+            executeFunction(sessionId, GeminiFunctionCall(name = action.functionName, args = argsMap), depth = 0)
         }
     }
 
@@ -690,10 +690,23 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // Execute the actual email service routines
-    private suspend fun executeFunction(sessionId: String, name: String, args: Map<String, Any?>) {
+    // Execute tool function and resolve back to LLM with standard multi-turn format
+    private suspend fun executeFunction(
+        sessionId: String,
+        call: GeminiFunctionCall,
+        depth: Int = 0
+    ) {
+        if (depth > 2) {
+            Log.w(TAG, "Límite de recursión alcanzado para llamadas a herramientas")
+            return
+        }
+
         _isLlmLoading.value = true
         try {
+            val name = call.name
+            val args = call.args ?: emptyMap()
+            Log.d(TAG, "Ejecutando herramienta: $name con args: $args (Profundidad: $depth)")
+
             val resultObject = when (name) {
                 "list_inbox" -> {
                     val lim = (args["limit"] as? Number)?.toInt() ?: 5
@@ -816,19 +829,47 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 "web_search" -> {
                     val query = args["query"]?.toString() ?: ""
-                    val providerState = repository.getSetting("search_provider") ?: "google_grounding"
+                    val providerState = repository.getSetting("search_provider") ?: "duckduckgo_scraper"
                     if (providerState == "brave") {
                         val apiKey = repository.getSetting("brave_search_api_key") ?: ""
                         if (apiKey.isBlank()) {
                             mapOf("error" to "La clave API para Brave Search no está configurada, escribe la clave en Ajustes.")
                         } else {
                             val results = webSearchService.searchBrave(query, apiKey)
-                            mapOf("success" to true, "query" to query, "results" to results.map { mapOf("title" to it.title, "url" to it.url, "snippet" to it.snippet) })
+                            mapOf(
+                                "success" to true,
+                                "provider" to "Brave Search",
+                                "query" to query,
+                                "results" to results.map { mapOf("title" to it.title, "url" to it.url, "snippet" to it.snippet) }
+                            )
                         }
                     } else {
-                        // DuckDuckGo free scraper fallback
+                        // DuckDuckGo free scraper (no API key required)
                         val results = webSearchService.searchDuckDuckGo(query)
-                        mapOf("success" to true, "query" to query, "results" to results.map { mapOf("title" to it.title, "url" to it.url, "snippet" to it.snippet) })
+                        mapOf(
+                            "success" to true,
+                            "provider" to "DuckDuckGo Scraper",
+                            "query" to query,
+                            "results" to results.map { mapOf("title" to it.title, "url" to it.url, "snippet" to it.snippet) }
+                        )
+                    }
+                }
+                "scrape_web_page" -> {
+                    val url = args["url"]?.toString() ?: ""
+                    val page = webSearchService.scrapeWebPage(url)
+                    if (page.success) {
+                        mapOf(
+                            "success" to true,
+                            "url" to page.url,
+                            "title" to page.title,
+                            "text_content" to page.text
+                        )
+                    } else {
+                        mapOf(
+                            "success" to false,
+                            "url" to page.url,
+                            "error" to (page.error ?: "No se pudo extraer contenido de la página web")
+                        )
                     }
                 }
                 else -> mapOf("error" to "Función desconocida `$name`")
@@ -838,15 +879,28 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
             val formattedResult = moshi.adapter(Map::class.java).toJson(resultObject)
             Log.d(TAG, "Tool output returned to model: $formattedResult")
 
-            // Add result as a function response part to conversation history
+            // CRITICAL FIX: In Gemini API Function Calling:
+            // The history sent back to the model MUST contain:
+            // 1) Model turn containing the functionCall
+            // 2) User turn containing the functionResponse
             val conversation = compileGeminiHistory(sessionId).toMutableList()
+            conversation.add(
+                GeminiContent(
+                    role = "model",
+                    parts = listOf(
+                        GeminiPart(
+                            functionCall = call
+                        )
+                    )
+                )
+            )
             conversation.add(
                 GeminiContent(
                     role = "user",
                     parts = listOf(
                         GeminiPart(
                             functionResponse = GeminiFunctionResponse(
-                                name = name,
+                                name = call.name,
                                 response = mapOf("result" to resultObject)
                             )
                         )
@@ -877,7 +931,7 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
             val githubUsername = repository.getSetting("github_username") ?: ""
             val gitlabUrl = repository.getSetting("gitlab_url") ?: "https://gitlab.com"
             val internetSearchEnabled = repository.getSetting("internet_search_enabled") == "true"
-            val searchProvider = repository.getSetting("search_provider") ?: "google_grounding"
+            val searchProvider = repository.getSetting("search_provider") ?: "duckduckgo_scraper"
 
             val nextResponse = llmService.resolveLlm(
                 history = conversation,
@@ -892,10 +946,10 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                 searchProvider = searchProvider
             )
             
-            processLlmResponse(sessionId, nextResponse)
+            processLlmResponse(sessionId, nextResponse, depth = depth + 1)
             
             // Auto refresh inbox tabs
-            if (mcpEmailEnabled) {
+            if (mcpEmailEnabled && name.contains("email")) {
                 refreshLiveInbox()
             }
 
@@ -924,6 +978,8 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
             "delete_email" -> "Mover el correo '${args["id"]}' a la papelera (eliminar)."
             "create_github_issue" -> "Crear un issue en GitHub en '${args["owner"]}/${args["repo"]}' con título '${args["title"]}'."
             "create_gitlab_issue" -> "Crear un issue en GitLab en el proyecto '${args["projectId"]}' con título '${args["title"]}'."
+            "web_search" -> "Buscar en internet '${args["query"]}'."
+            "scrape_web_page" -> "Entrar y extraer texto de la página '${args["url"]}'."
             else -> "Ejecutar la operación '$fName'."
         }
     }
@@ -1025,6 +1081,20 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
 
     fun attachCustomFile(name: String) {
         _attachedImage.value = name
+    }
+
+    // Google Play Data Protection Policy: Complete user data reset / account deletion
+    fun clearAllUserData(onFinished: () -> Unit = {}) {
+        viewModelScope.launch {
+            repository.clearAllUserData()
+            emailAccounts.value = emptyList()
+            activeEmailAccountId.value = null
+            llmProfiles.value = emptyList()
+            activeLlmProfileId.value = null
+            _liveInbox.value = emptyList()
+            createNewSession()
+            onFinished()
+        }
     }
 
     private val moshi = Moshi.Builder().add(KotlinJsonAdapterFactory()).build()

@@ -95,7 +95,12 @@ object L10n {
         "recording_transcribing" to "Transcribiendo audio localmente...",
         "chat_input_placeholder" to "Pregúntame sobre tus correos...",
         "planning_mode_inactive" to "⚡ Modo Ejecución",
-        "planning_mode_active" to "🛡️ Modo Planificación"
+        "planning_mode_active" to "🛡️ Modo Planificación",
+        "privacy_policy_title" to "Transparencia y Privacidad de Datos",
+        "privacy_policy_sub" to "Conforme a las Políticas de Google Play: tus datos residen 100% en tu dispositivo.",
+        "privacy_btn" to "Ver Política de Privacidad",
+        "delete_all_data_btn" to "Eliminar Todos Mis Datos de la App",
+        "delete_all_data_confirm" to "¿Estás seguro de que deseas eliminar todas las cuentas, sesiones y credenciales? Esta acción es irreversible."
     )
 
     private val en = mapOf(
@@ -184,6 +189,11 @@ object L10n {
         "recording_transcribing" to "Transcribing audio locally...",
         "chat_input_placeholder" to "Ask me about your emails...",
         "planning_mode_inactive" to "⚡ Execution Mode",
-        "planning_mode_active" to "🛡️ Planning Mode"
+        "planning_mode_active" to "🛡️ Planning Mode",
+        "privacy_policy_title" to "Data Privacy & Transparency",
+        "privacy_policy_sub" to "Compliant with Google Play Policies: your data stays 100% on your device.",
+        "privacy_btn" to "View Privacy Policy",
+        "delete_all_data_btn" to "Delete All My App Data",
+        "delete_all_data_confirm" to "Are you sure you want to permanently delete all accounts, chat history, and stored API keys? This action cannot be undone."
     )
 }

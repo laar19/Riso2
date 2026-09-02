@@ -58,4 +58,17 @@ interface RisoDao {
 
     @Query("DELETE FROM app_settings WHERE `key` = :key")
     suspend fun deleteSetting(key: String)
+
+    // Data Deletion Policy compliance: purge all user data
+    @Query("DELETE FROM chat_messages")
+    suspend fun deleteAllMessages()
+
+    @Query("DELETE FROM chat_sessions")
+    suspend fun deleteAllSessions()
+
+    @Query("DELETE FROM pending_actions")
+    suspend fun deleteAllPendingActions()
+
+    @Query("DELETE FROM app_settings")
+    suspend fun deleteAllSettings()
 }

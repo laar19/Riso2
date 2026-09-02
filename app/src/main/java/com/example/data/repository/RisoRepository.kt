@@ -69,6 +69,13 @@ class RisoRepository(private val risoDao: RisoDao) {
         risoDao.deleteSetting(key)
     }
 
+    suspend fun clearAllUserData() {
+        risoDao.deleteAllMessages()
+        risoDao.deleteAllSessions()
+        risoDao.deleteAllPendingActions()
+        risoDao.deleteAllSettings()
+    }
+
     // Reactive settings map Helper
     val allSettings: Flow<Map<String, String>> = risoDao.getAllSettingsReactive().map { list ->
         list.associate { it.key to it.value }

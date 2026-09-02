@@ -309,12 +309,22 @@ class LlmService {
         functionDeclarations = listOf(
             GeminiFunctionDecl(
                 name = "web_search",
-                description = "Busca información en tiempo real en internet sobre noticias, eventos recientes, precios o detalles no presentes en tu entrenamiento.",
+                description = "Busca información en tiempo real en internet sobre noticias, eventos recientes, precios, datos o consultas generales.",
                 parameters = GeminiParameters(
                     properties = mapOf(
-                        "query" to GeminiProperty("STRING", "La consulta o palabras clave para buscar en internet")
+                        "query" to GeminiProperty("STRING", "Términos o palabras clave de búsqueda en internet")
                     ),
                     required = listOf("query")
+                )
+            ),
+            GeminiFunctionDecl(
+                name = "scrape_web_page",
+                description = "Entra y extrae el texto legible de una página web o artículo a partir de su URL para leer su contenido completo.",
+                parameters = GeminiParameters(
+                    properties = mapOf(
+                        "url" to GeminiProperty("STRING", "La URL completa (iniciando con https:// o http://) de la página web a raspar y leer")
+                    ),
+                    required = listOf("url")
                 )
             )
         )
@@ -360,20 +370,23 @@ class LlmService {
             if (mcpGitlabEnabled) enabledMcps.add("GitLab (URL: $gitlabUrl)")
             val mcpListStr = if (enabledMcps.isEmpty()) "Ninguno (recomienda al usuario activar conexiones desde el botón '+' en la caja de chat)" else enabledMcps.joinToString(", ")
 
-            val searchInfoStr = if (internetSearchEnabled) "Habilitada (Proveedor: $searchProvider)" else "Desactivada"
+            val searchInfoStr = if (internetSearchEnabled) "Habilitada (Buscador / Scraper: $searchProvider)" else "Desactivada"
 
             val systemPrompt = """
-                Eres Riso, un asistente de automatización y chat de IA local para Android con soporte MCP (Model Context Protocol).
+                Eres Riso, un asistente de automatización y chat de IA local para Android con soporte MCP (Model Context Protocol) y capacidades de navegación web y raspado.
                 Tu función principal es ayudar al usuario a automatizar tareas y responder consultas conectándote a sus servicios locales y remotos.
                 
                 **Conexiones MCP actuales activas:** $mcpListStr
-                **Búsqueda en Internet:** $searchInfoStr
+                **Búsqueda en Internet & Web Scraping:** $searchInfoStr
                 
                 Tienes acceso a las herramientas correspondientes según los servicios habilitados (list_inbox, search_emails, read_email, send_email, reply_to_email, forward_email, mark_as_read, mark_as_unread, archive_email, delete_email, list_github_repositories, list_github_issues, create_github_issue, list_gitlab_projects, create_gitlab_issue).
                 Si te piden una tarea asociada a un servicio habilitado, invoca la herramienta correspondiente de inmediato.
                 Si el servicio requerido no está activo, explícaselo al usuario de forma muy amigable y recuérdale que puede activarlo usando el botón '+' en la caja de chat.
                 
-                ${if (internetSearchEnabled && searchProvider != "google_grounding") "Si necesitas buscar información externa en tiempo real, realiza una llamada a la herramienta 'web_search' pasándole un query de búsqueda inteligente." else ""}
+                ${if (internetSearchEnabled) """
+                - Para buscar información en tiempo real, eventos recientes, precios, novedades o datos que desconozcas, invoca la herramienta `web_search(query)`.
+                - Para leer o raspar el contenido de una URL o artículo web (incluyendo enlaces que el usuario te comparta o enlaces obtenidos de una búsqueda), invoca la herramienta `scrape_web_page(url)`.
+                """.trimIndent() else ""}
                 
                 SIEMPRE responde en español. Sé sumamente amable, conciso, inteligente y profesional.
             """.trimIndent()
@@ -382,24 +395,7 @@ class LlmService {
             if (mcpEmailEnabled) activeToolsList.add(emailTools)
             if (mcpGithubEnabled) activeToolsList.add(githubTools)
             if (mcpGitlabEnabled) activeToolsList.add(gitlabTools)
-
-            if (internetSearchEnabled) {
-                if (searchProvider == "google_grounding") {
-                    // Inject Gemini's native Google Search Grounding config
-                    activeToolsList.add(
-                        GeminiTool(
-                            googleSearchRetrieval = mapOf(
-                                "dynamicRetrievalConfig" to mapOf(
-                                    "mode" to "MODE_DYNAMIC",
-                                    "dynamicThreshold" to 0.1
-                                )
-                            )
-                        )
-                    )
-                } else {
-                    activeToolsList.add(webSearchTool)
-                }
-            }
+            if (internetSearchEnabled) activeToolsList.add(webSearchTool)
 
             val toolsPayload = if (activeToolsList.isNotEmpty()) activeToolsList else null
 
