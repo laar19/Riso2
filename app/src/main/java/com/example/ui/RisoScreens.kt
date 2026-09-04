@@ -46,6 +46,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import com.example.data.model.ChatMessage
 import com.example.data.model.PendingAction
+import com.example.data.model.GithubAccount
+import com.example.data.model.GitlabAccount
+import com.example.service.email.EmailAccount
 import com.example.service.email.RisoEmail
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -265,13 +268,15 @@ fun RisoMainScreen(
                         }
                     }
                     
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = t("active_account") + (activeAccount?.emailAddress ?: t("offline")),
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f),
-                        modifier = Modifier.padding(horizontal = 8.dp)
-                    )
+                    if (activeAccount != null && activeAccount.emailAddress.isNotBlank() && !activeAccount.emailAddress.contains("riso.local", ignoreCase = true)) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = t("active_account") + activeAccount.emailAddress,
+                            fontSize = 10.5.sp,
+                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f),
+                            modifier = Modifier.padding(horizontal = 8.dp)
+                        )
+                    }
                 }
             }
         }
@@ -288,12 +293,12 @@ fun RisoMainScreen(
                                     else -> t("settings_title")
                                 },
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 16.sp
+                                fontSize = 15.sp
                             )
-                            if (currentTab == "chat" && activeAccount != null) {
+                            if (currentTab == "chat" && activeAccount != null && activeAccount.emailAddress.isNotBlank() && !activeAccount.emailAddress.contains("riso.local", ignoreCase = true)) {
                                 Text(
                                     text = activeAccount.emailAddress,
-                                    fontSize = 11.sp,
+                                    fontSize = 10.sp,
                                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                                 )
                             }
@@ -333,6 +338,7 @@ fun RisoMainScreen(
 }
 
 // --- TAB 1: Chat Automation Agent Screen ---
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RisoChatScreen(viewModel: RisoViewModel) {
     val messages by viewModel.currentMessages.collectAsStateWithLifecycle()
@@ -342,6 +348,34 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val emailAccounts by viewModel.emailAccounts.collectAsStateWithLifecycle()
     val activeEmailAccountId by viewModel.activeEmailAccountId.collectAsStateWithLifecycle()
+    val githubAccounts by viewModel.githubAccounts.collectAsStateWithLifecycle()
+    val gitlabAccounts by viewModel.gitlabAccounts.collectAsStateWithLifecycle()
+
+    var mcpTabSelection by remember { mutableIntStateOf(0) } // 0: Correo, 1: GitHub & GitLab, 2: Herramientas & Adjuntos
+    var gitSubTabSelection by remember { mutableIntStateOf(0) } // 0: GitHub, 1: GitLab
+
+    var showAddEmailForm by remember { mutableStateOf(false) }
+    var emailInputAddress by remember { mutableStateOf("") }
+    var emailInputPassword by remember { mutableStateOf("") }
+    var emailInputImapServer by remember { mutableStateOf("imap.gmail.com") }
+    var emailInputImapPort by remember { mutableStateOf("993") }
+    var emailInputSmtpServer by remember { mutableStateOf("smtp.gmail.com") }
+    var emailInputSmtpPort by remember { mutableStateOf("587") }
+
+    var showAddGithubForm by remember { mutableStateOf(false) }
+    var githubInputUsername by remember { mutableStateOf("") }
+    var githubInputToken by remember { mutableStateOf("") }
+    var githubInputLabel by remember { mutableStateOf("") }
+
+    var showAddGitlabForm by remember { mutableStateOf(false) }
+    var gitlabInputUrl by remember { mutableStateOf("https://gitlab.com") }
+    var gitlabInputUsername by remember { mutableStateOf("") }
+    var gitlabInputToken by remember { mutableStateOf("") }
+    var gitlabInputLabel by remember { mutableStateOf("") }
+
+    var emailTestResults by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var githubTestResults by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var gitlabTestResults by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
 
     val sttProvider by viewModel.sttProvider.collectAsStateWithLifecycle()
     val whisperStatus by viewModel.localWhisperStatus.collectAsStateWithLifecycle()
@@ -378,25 +412,6 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
         }
     }
 
-    var tempGithubUsername by remember(settings) { mutableStateOf(settings["github_username"] ?: "") }
-    var tempGithubPat by remember(settings) { mutableStateOf(settings["github_pat"] ?: "") }
-    var tempGitlabUrl by remember(settings) { mutableStateOf(settings["gitlab_url"] ?: "https://gitlab.com") }
-    var tempGitlabPat by remember(settings) { mutableStateOf(settings["gitlab_pat"] ?: "") }
-    var tempBraveApiKey by remember(settings) { mutableStateOf(settings["brave_search_api_key"] ?: "") }
-
-    var oauthGithubWorking by remember { mutableStateOf(false) }
-    var oauthGitlabWorking by remember { mutableStateOf(false) }
-
-    var showMailManager by remember { mutableStateOf(false) }
-    var newEmailAddress by remember { mutableStateOf("") }
-    var newEmailPass by remember { mutableStateOf("") }
-    var newImapHost by remember { mutableStateOf("") }
-    var newSmtpHost by remember { mutableStateOf("") }
-
-    val mcpEmailEnabled = settings["mcp_email_enabled"] != "false"
-    val mcpGithubEnabled = settings["mcp_github_enabled"] == "true"
-    val mcpGitlabEnabled = settings["mcp_gitlab_enabled"] == "true"
-    
     val isEn = settings["language"] == "en"
     fun t(key: String): String = L10n.t(key, isEn)
     val currentProvider = settings["llm_provider"] ?: "Gemini"
@@ -448,82 +463,109 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
             }
         }
 
-        // Model selector Dialog displaying configured LLM profiles
+        // Model selector Bottom Sheet displaying configured LLM profiles (sliding from bottom)
         if (showModelSelector) {
             val llmProfiles by viewModel.llmProfiles.collectAsStateWithLifecycle()
             val activeLlmProfileId by viewModel.activeLlmProfileId.collectAsStateWithLifecycle()
+            val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-            Dialog(onDismissRequest = { showModelSelector = false }) {
-                Card(
-                    shape = RoundedCornerShape(20.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
+            ModalBottomSheet(
+                onDismissRequest = { showModelSelector = false },
+                sheetState = sheetState,
+                containerColor = MaterialTheme.colorScheme.surface,
+                shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
+            ) {
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(16.dp)
+                        .padding(horizontal = 20.dp, vertical = 8.dp)
+                        .padding(bottom = 28.dp)
                 ) {
-                    Column(
-                        modifier = Modifier.padding(18.dp)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                        Column {
+                            Text(
+                                text = "Modelos LLM",
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 17.sp,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Text(
+                                text = "Selecciona el modelo activo para el chat",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                            )
+                        }
+                        IconButton(
+                            onClick = { showModelSelector = false },
+                            modifier = Modifier.size(32.dp)
                         ) {
-                            Column {
-                                Text(
-                                    text = "Modelos LLM",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 16.sp,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                                Text(
-                                    text = "Selecciona el modelo activo para el chat",
-                                    fontSize = 11.sp,
-                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                                )
-                            }
-                            IconButton(
-                                onClick = { showModelSelector = false },
-                                modifier = Modifier.size(28.dp)
+                            Icon(Icons.Default.Close, contentDescription = "Close", modifier = Modifier.size(20.dp))
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    if (llmProfiles.isEmpty()) {
+                        Card(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(16.dp).fillMaxWidth(),
+                                horizontalAlignment = Alignment.CenterHorizontally
                             ) {
-                                Icon(Icons.Default.Close, contentDescription = "Close", modifier = Modifier.size(18.dp))
+                                Text("⚠️", fontSize = 24.sp)
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = "No tienes ningún modelo configurado",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "No hay ningún modelo predeterminado. Puedes añadir tus proveedores y claves de API en la pestaña de Ajustes.",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                )
                             }
                         }
-
-                        Spacer(modifier = Modifier.height(12.dp))
-                        HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        if (llmProfiles.isEmpty()) {
-                            Text(
-                                text = "No hay modelos configurados. Agrega uno en Ajustes.",
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                                modifier = Modifier.padding(vertical = 12.dp)
-                            )
-                        } else {
-                            llmProfiles.forEach { profile ->
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 340.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            items(llmProfiles) { profile ->
                                 val isSel = profile.id == activeLlmProfileId
                                 Card(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(vertical = 4.dp)
                                         .clickable {
                                             viewModel.selectActiveLlmProfile(profile.id)
                                             showModelSelector = false
                                         },
                                     colors = CardDefaults.cardColors(
-                                        containerColor = if (isSel) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
+                                        containerColor = if (isSel) MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
                                                          else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)
                                     ),
-                                    border = if (isSel) BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else null,
-                                    shape = RoundedCornerShape(10.dp)
+                                    border = if (isSel) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary)
+                                             else BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.15f)),
+                                    shape = RoundedCornerShape(12.dp)
                                 ) {
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .padding(10.dp),
+                                            .padding(12.dp),
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.SpaceBetween
                                     ) {
@@ -536,19 +578,19 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
                                             )
                                             Row(
                                                 verticalAlignment = Alignment.CenterVertically,
-                                                modifier = Modifier.padding(top = 2.dp)
+                                                modifier = Modifier.padding(top = 3.dp)
                                             ) {
                                                 Text(
                                                     text = profile.provider,
                                                     fontSize = 10.sp,
                                                     fontWeight = FontWeight.SemiBold,
-                                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
                                                     modifier = Modifier
                                                         .background(
-                                                            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
+                                                            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
                                                             RoundedCornerShape(4.dp)
                                                         )
-                                                        .padding(horizontal = 4.dp, vertical = 1.dp)
+                                                        .padding(horizontal = 5.dp, vertical = 2.dp)
                                                 )
                                                 if (profile.modelName.isNotBlank()) {
                                                     Spacer(modifier = Modifier.width(6.dp))
@@ -566,22 +608,21 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
                                                 viewModel.selectActiveLlmProfile(profile.id)
                                                 showModelSelector = false
                                             },
-                                            colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colorScheme.primary),
-                                            modifier = Modifier.scale(0.85f)
+                                            colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colorScheme.primary)
                                         )
                                     }
                                 }
                             }
                         }
+                    }
 
-                        Spacer(modifier = Modifier.height(14.dp))
-                        Button(
-                            onClick = { showModelSelector = false },
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(10.dp)
-                        ) {
-                            Text("Cerrar", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                        }
+                    Spacer(modifier = Modifier.height(14.dp))
+                    OutlinedButton(
+                        onClick = { showModelSelector = false },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Cerrar", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                     }
                 }
             }
@@ -688,71 +729,117 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
         ) {
             val llmProfiles by viewModel.llmProfiles.collectAsStateWithLifecycle()
             val activeLlmId by viewModel.activeLlmProfileId.collectAsStateWithLifecycle()
-            val activeProf = llmProfiles.find { it.id == activeLlmId } ?: llmProfiles.firstOrNull()
-            val activeDisplayName = activeProf?.name ?: currentProvider
+            val activeProf = llmProfiles.find { it.id == activeLlmId }
+            val activeDisplayName = activeProf?.name
 
-            // Select active LLM directly from chat box
+            // Select active LLM directly from chat box (opens sliding bottom sheet)
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.08f))
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(
+                        if (activeProf != null) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
+                        else MaterialTheme.colorScheme.error.copy(alpha = 0.08f)
+                    )
+                    .border(
+                        1.dp,
+                        if (activeProf != null) MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)
+                        else MaterialTheme.colorScheme.error.copy(alpha = 0.4f),
+                        RoundedCornerShape(14.dp)
+                    )
                     .clickable { showModelSelector = true }
-                    .padding(horizontal = 10.dp, vertical = 4.dp)
+                    .padding(horizontal = 10.dp, vertical = 5.dp)
                     .testTag("chat_box_llm_selector")
             ) {
                 Text(
-                    text = "🤖 $activeDisplayName ▾",
+                    text = if (activeDisplayName != null) "🤖 $activeDisplayName ▾" else "⚠️ Seleccionar Modelo ▾",
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
+                    color = if (activeProf != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
                 )
             }
 
-            // Planning Mode switch
+            // Planning Mode / Execution Mode toggle with dynamic radio position and color
+            // Planning Mode Active: Green color, radio button on the LEFT
+            // Execution Mode Active: Red color, radio button on the RIGHT
             Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(
+                        if (planningMode) Color(0xFF10B981).copy(alpha = 0.12f)
+                        else Color(0xFFEF4444).copy(alpha = 0.12f)
+                    )
+                    .border(
+                        width = 1.dp,
+                        color = if (planningMode) Color(0xFF10B981).copy(alpha = 0.6f)
+                                else Color(0xFFEF4444).copy(alpha = 0.6f),
+                        shape = RoundedCornerShape(20.dp)
+                    )
+                    .clickable { viewModel.togglePlanningMode() }
+                    .padding(horizontal = 10.dp, vertical = 5.dp)
+                    .testTag("toggle_planning_mode_chat"),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = if (planningMode) t("planning_mode_active") else t("planning_mode_inactive"),
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = if (planningMode) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                    modifier = Modifier.padding(end = 4.dp)
-                )
-                Box(
-                    modifier = Modifier.size(46.dp, 28.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Switch(
-                        checked = planningMode,
-                        onCheckedChange = { viewModel.togglePlanningMode() },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = MaterialTheme.colorScheme.tertiary,
-                            checkedTrackColor = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.3f),
-                            uncheckedThumbColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
-                            uncheckedTrackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f),
-                        ),
+                if (planningMode) {
+                    // Planning Mode: GREEN, Radio button on the LEFT
+                    Box(
                         modifier = Modifier
-                            .scale(0.65f)
-                            .testTag("toggle_planning_mode_chat")
+                            .size(10.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF10B981))
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Planificación",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF047857)
+                    )
+                } else {
+                    // Execution Mode: RED, Radio button on the RIGHT
+                    Text(
+                        text = "Ejecución",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFB91C1C)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Box(
+                        modifier = Modifier
+                            .size(10.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFFEF4444))
                     )
                 }
             }
         }
 
-        // Bottom Input Row
+        // Bottom Input Row - clean 4-element layout matching modern compact distribution
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 6.dp)
-                .background(Color.Transparent),
-            verticalAlignment = Alignment.CenterVertically
+                .padding(start = 12.dp, end = 12.dp, top = 3.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
+            // MCP & Attachments button
+            IconButton(
+                onClick = { showAttachMenu = true },
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                    .testTag("mcp_attachments_plus_button")
+            ) {
+                Text("➕", fontSize = 15.sp)
+            }
+
+            // Chat input text field
+            val canSend = textInput.isNotBlank() || attachedImage != null
             OutlinedTextField(
                 value = textInput,
                 onValueChange = { textInput = it },
-                placeholder = { Text(t("chat_input_placeholder"), fontSize = 14.sp) },
+                placeholder = { Text(t("chat_input_placeholder"), fontSize = 13.sp) },
                 shape = RoundedCornerShape(24.dp),
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedBorderColor = MaterialTheme.colorScheme.primary,
@@ -760,823 +847,106 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
                     focusedContainerColor = MaterialTheme.colorScheme.surface,
                     unfocusedContainerColor = MaterialTheme.colorScheme.surface
                 ),
-                maxLines = 4,
+                maxLines = 3,
                 modifier = Modifier
                     .weight(1f)
                     .testTag("chat_input_text_field"),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                 keyboardActions = KeyboardActions(onSend = {
-                    if (textInput.isNotBlank() || attachedImage != null) {
+                    if (canSend) {
                         viewModel.sendMessage(textInput)
                         textInput = ""
                         keyboardController?.hide()
                     }
-                }),
-                leadingIcon = {
-                    IconButton(
-                        onClick = { showAttachMenu = true },
-                        modifier = Modifier.size(36.dp)
-                    ) {
-                        Text("➕", fontSize = 18.sp, modifier = Modifier.testTag("mcp_attachments_plus_button"))
+                })
+            )
+
+            // STT Microphone button
+            IconButton(
+                onClick = {
+                    viewModel.triggerMicrophoneTranscription { transcription ->
+                        textInput = transcription
                     }
                 },
-                trailingIcon = {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(end = 12.dp) // Beautiful border on the safe right side
-                    ) {
-                        // Plus (+) attachment action for convenient bottom-right trigger!
-                        IconButton(
-                            onClick = { showAttachMenu = true },
-                            modifier = Modifier.size(36.dp).testTag("chat_attach_button_right")
-                        ) {
-                            Text("➕", fontSize = 16.sp)
-                        }
+                enabled = !isRecordingAudio,
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(
+                        if (isRecordingAudio) MaterialTheme.colorScheme.error.copy(alpha = 0.15f)
+                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                    )
+                    .testTag("chat_stt_microphone")
+            ) {
+                Text(
+                    text = "🎙️",
+                    fontSize = 15.sp,
+                    color = if (isRecordingAudio) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
 
-                        Spacer(modifier = Modifier.width(4.dp))
-
-                        // Microphone button integrated directly inside the text input
-                        IconButton(
-                            onClick = {
-                                viewModel.triggerMicrophoneTranscription { transcription ->
-                                    textInput = transcription
-                                }
-                            },
-                            enabled = !isRecordingAudio,
-                            modifier = Modifier.size(36.dp).testTag("chat_stt_microphone")
-                        ) {
-                            Text(
-                                text = "🎙️",
-                                fontSize = 16.sp,
-                                color = if (isRecordingAudio) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        
-                        Spacer(modifier = Modifier.width(4.dp))
-                        
-                        // Send button embedded inside the text field on the safe RHS
-                        IconButton(
-                            onClick = {
-                                if (textInput.isNotBlank() || attachedImage != null) {
-                                    viewModel.sendMessage(textInput)
-                                    textInput = ""
-                                    keyboardController?.hide()
-                                }
-                            },
-                            enabled = textInput.isNotBlank() || attachedImage != null,
-                            modifier = Modifier
-                                .size(34.dp)
-                                .clip(CircleShape)
-                                .background(
-                                    if (textInput.isNotBlank() || attachedImage != null)
-                                        MaterialTheme.colorScheme.primary
-                                    else
-                                        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f)
-                                )
-                                .testTag("chat_send_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Send,
-                                contentDescription = "Send",
-                                tint = if (textInput.isNotBlank() || attachedImage != null) Color.White else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
-                                modifier = Modifier.size(15.dp)
-                            )
-                        }
+            // Send button
+            IconButton(
+                onClick = {
+                    if (canSend) {
+                        viewModel.sendMessage(textInput)
+                        textInput = ""
+                        keyboardController?.hide()
                     }
-                }
-            )
+                },
+                enabled = canSend,
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(
+                        if (canSend)
+                            MaterialTheme.colorScheme.primary
+                        else
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                    )
+                    .testTag("chat_send_button")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Send,
+                    contentDescription = "Send",
+                    tint = if (canSend) Color.White else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f),
+                    modifier = Modifier.size(15.dp)
+                )
+            }
         }
     }
 
     // Unified MCP Connections + Attachments Dialog
     if (showAttachMenu) {
-        Dialog(onDismissRequest = { showAttachMenu = false }) {
-            Card(
-                shape = RoundedCornerShape(24.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .fillMaxHeight(0.85f)
-                    .padding(8.dp)
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(16.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column {
-                            Text(
-                                text = "MCP Conexiones & Herramientas",
-                                fontWeight = FontWeight.ExtraBold,
-                                fontSize = 16.sp,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                            Text(
-                                text = "Activa y configura conectores del chat local",
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                            )
-                        }
-                        IconButton(
-                            onClick = { showAttachMenu = false },
-                            modifier = Modifier.size(28.dp)
-                        ) {
-                            Icon(Icons.Default.Close, contentDescription = "Close", modifier = Modifier.size(18.dp))
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
-
-                    Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .verticalScroll(rememberScrollState())
-                            .padding(vertical = 8.dp),
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
-                        // SECTION 1: MCP EMAIL
-                        Card(
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Column(modifier = Modifier.padding(12.dp)) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text("📬", fontSize = 18.sp)
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Column {
-                                            Text("Conector MCP Correo (IMAP/SMTP)", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                                            Text("Sincroniza y redacta emails desde el chat", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
-                                        }
-                                    }
-                                    Box(
-                                        modifier = Modifier.size(54.dp, 34.dp),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Switch(
-                                            checked = mcpEmailEnabled,
-                                            onCheckedChange = { isChecked ->
-                                                viewModel.updateSetting("mcp_email_enabled", if (isChecked) "true" else "false")
-                                            },
-                                            colors = SwitchDefaults.colors(
-                                                checkedThumbColor = MaterialTheme.colorScheme.primary,
-                                                checkedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f),
-                                            ),
-                                            modifier = Modifier.scale(0.75f).testTag("toggle_mcp_email")
-                                        )
-                                    }
-                                }
-
-                                if (mcpEmailEnabled) {
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))
-                                    Spacer(modifier = Modifier.height(6.dp))
-
-                                    // Render connected accounts
-                                    if (emailAccounts.isEmpty()) {
-                                        Text("No hay cuentas configuradas.", fontSize = 11.sp, color = Color.Red, modifier = Modifier.padding(vertical = 4.dp))
-                                    } else {
-                                        emailAccounts.forEach { acc ->
-                                            val isActive = acc.id == activeEmailAccountId
-                                            Row(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .padding(vertical = 2.dp)
-                                                    .background(if (isActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else Color.Transparent, RoundedCornerShape(6.dp))
-                                                    .padding(4.dp),
-                                                horizontalArrangement = Arrangement.SpaceBetween,
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Column(modifier = Modifier.clickable { viewModel.selectActiveEmailAccount(acc.id) }) {
-                                                    Text(acc.emailAddress, fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                                    Text("Active: $isActive • IMAP: ${acc.imapServer}", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
-                                                }
-                                                IconButton(
-                                                    onClick = { viewModel.removeEmailAccount(acc.id) },
-                                                    modifier = Modifier.size(24.dp)
-                                                ) {
-                                                    Text("🗑️", fontSize = 11.sp)
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    TextButton(
-                                        onClick = { showMailManager = !showMailManager },
-                                        contentPadding = PaddingValues(0.dp)
-                                    ) {
-                                        Text(if (showMailManager) "▲ Ocultar formulario" else "▼ Añadir nueva cuenta de correo...", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                    }
-
-                                    if (showMailManager) {
-                                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                            OutlinedTextField(
-                                                value = newEmailAddress,
-                                                onValueChange = { newEmailAddress = it },
-                                                label = { Text("Correo", fontSize = 11.sp) },
-                                                placeholder = { Text("ejemplo@gmail.com") },
-                                                shape = RoundedCornerShape(8.dp),
-                                                textStyle = LocalTextStyle.current.copy(fontSize = 11.sp),
-                                                modifier = Modifier.fillMaxWidth(),
-                                                singleLine = true
-                                            )
-                                            OutlinedTextField(
-                                                value = newEmailPass,
-                                                onValueChange = { newEmailPass = it },
-                                                label = { Text("Contraseña / App Pass", fontSize = 11.sp) },
-                                                visualTransformation = PasswordVisualTransformation(),
-                                                shape = RoundedCornerShape(8.dp),
-                                                textStyle = LocalTextStyle.current.copy(fontSize = 11.sp),
-                                                modifier = Modifier.fillMaxWidth(),
-                                                singleLine = true
-                                            )
-                                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                                OutlinedTextField(
-                                                    value = newImapHost,
-                                                    onValueChange = { newImapHost = it },
-                                                    label = { Text("IMAP", fontSize = 11.sp) },
-                                                    placeholder = { Text("imap.gmail.com") },
-                                                    shape = RoundedCornerShape(8.dp),
-                                                    textStyle = LocalTextStyle.current.copy(fontSize = 9.sp),
-                                                    modifier = Modifier.weight(1f),
-                                                    singleLine = true
-                                                )
-                                                OutlinedTextField(
-                                                    value = newSmtpHost,
-                                                    onValueChange = { newSmtpHost = it },
-                                                    label = { Text("SMTP", fontSize = 11.sp) },
-                                                    placeholder = { Text("smtp.gmail.com") },
-                                                    shape = RoundedCornerShape(8.dp),
-                                                    textStyle = LocalTextStyle.current.copy(fontSize = 9.sp),
-                                                    modifier = Modifier.weight(1f),
-                                                    singleLine = true
-                                                )
-                                            }
-                                            Button(
-                                                onClick = {
-                                                    if (newEmailAddress.isNotBlank() && newEmailPass.isNotBlank()) {
-                                                        viewModel.addEmailAccount(
-                                                            emailAddress = newEmailAddress,
-                                                            imapServer = if (newImapHost.isBlank()) "imap.gmail.com" else newImapHost,
-                                                            imapPort = "993",
-                                                            smtpServer = if (newSmtpHost.isBlank()) "smtp.gmail.com" else newSmtpHost,
-                                                            smtpPort = "587",
-                                                            passwordVal = newEmailPass
-                                                        )
-                                                        newEmailAddress = ""
-                                                        newEmailPass = ""
-                                                        newImapHost = ""
-                                                        newSmtpHost = ""
-                                                        showMailManager = false
-                                                    }
-                                                },
-                                                shape = RoundedCornerShape(8.dp),
-                                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                                                modifier = Modifier.fillMaxWidth().height(32.dp),
-                                                contentPadding = PaddingValues(0.dp)
-                                            ) {
-                                                Text("Guardar Cuenta de Correo", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // SECTION 2: MCP GITHUB
-                        Card(
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Column(modifier = Modifier.padding(12.dp)) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text("🐙", fontSize = 18.sp)
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Column {
-                                            Text("Conector MCP GitHub (PAT / OAuth)", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                                            Text("Administra repos y crea issues", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
-                                        }
-                                    }
-                                    Box(
-                                        modifier = Modifier.size(54.dp, 34.dp),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Switch(
-                                            checked = mcpGithubEnabled,
-                                            onCheckedChange = { isChecked ->
-                                                viewModel.updateSetting("mcp_github_enabled", if (isChecked) "true" else "false")
-                                            },
-                                            colors = SwitchDefaults.colors(
-                                                checkedThumbColor = MaterialTheme.colorScheme.primary,
-                                                checkedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f),
-                                            ),
-                                            modifier = Modifier.scale(0.75f).testTag("toggle_mcp_github")
-                                        )
-                                    }
-                                }
-
-                                if (mcpGithubEnabled) {
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))
-                                    Spacer(modifier = Modifier.height(6.dp))
-
-                                    OutlinedTextField(
-                                        value = tempGithubUsername,
-                                        onValueChange = {
-                                            tempGithubUsername = it
-                                            viewModel.updateSetting("github_username", it)
-                                        },
-                                        label = { Text("Usuario GitHub", fontSize = 11.sp) },
-                                        shape = RoundedCornerShape(8.dp),
-                                        textStyle = LocalTextStyle.current.copy(fontSize = 11.sp),
-                                        modifier = Modifier.fillMaxWidth(),
-                                        singleLine = true
-                                    )
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    OutlinedTextField(
-                                        value = tempGithubPat,
-                                        onValueChange = {
-                                            tempGithubPat = it
-                                            viewModel.updateSetting("github_pat", it)
-                                        },
-                                        label = { Text("Personal Access Token (PAT)", fontSize = 11.sp) },
-                                        visualTransformation = PasswordVisualTransformation(),
-                                        shape = RoundedCornerShape(8.dp),
-                                        textStyle = LocalTextStyle.current.copy(fontSize = 11.sp),
-                                        modifier = Modifier.fillMaxWidth(),
-                                        singleLine = true
-                                    )
-                                    Spacer(modifier = Modifier.height(6.dp))
-
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        TextButton(
-                                            onClick = {
-                                                oauthGithubWorking = true
-                                                coroutineScope.launch {
-                                                    kotlinx.coroutines.delay(1200)
-                                                    oauthGithubWorking = false
-                                                    tempGithubUsername = "user_github_oauth"
-                                                    tempGithubPat = "gho_simulated_oauth_secret_token"
-                                                    viewModel.updateSetting("github_username", "user_github_oauth")
-                                                    viewModel.updateSetting("github_pat", "gho_simulated_oauth_secret_token")
-                                                }
-                                            },
-                                            modifier = Modifier.height(32.dp),
-                                            contentPadding = PaddingValues(horizontal = 8.dp)
-                                        ) {
-                                            Text("Conectar vía OAuth (Simulado) 🔗", fontSize = 11.sp)
-                                        }
-
-                                        if (oauthGithubWorking) {
-                                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                                        } else if (tempGithubPat.startsWith("gho_")) {
-                                            Text("🟢 OAuth Conectado", fontSize = 10.sp, color = Color(0xFF10B981), fontWeight = FontWeight.Bold)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // SECTION 3: MCP GITLAB
-                        Card(
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Column(modifier = Modifier.padding(12.dp)) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text("🦊", fontSize = 18.sp)
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Column {
-                                            Text("Conector MCP GitLab (PAT / OAuth)", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                                            Text("Interactúa con servidores GitLab", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
-                                        }
-                                    }
-                                    Box(
-                                        modifier = Modifier.size(54.dp, 34.dp),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Switch(
-                                            checked = mcpGitlabEnabled,
-                                            onCheckedChange = { isChecked ->
-                                                viewModel.updateSetting("mcp_gitlab_enabled", if (isChecked) "true" else "false")
-                                            },
-                                            colors = SwitchDefaults.colors(
-                                                checkedThumbColor = MaterialTheme.colorScheme.primary,
-                                                checkedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f),
-                                            ),
-                                            modifier = Modifier.scale(0.75f).testTag("toggle_mcp_gitlab")
-                                        )
-                                    }
-                                }
-
-                                if (mcpGitlabEnabled) {
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))
-                                    Spacer(modifier = Modifier.height(6.dp))
-
-                                    OutlinedTextField(
-                                        value = tempGitlabUrl,
-                                        onValueChange = {
-                                            tempGitlabUrl = it
-                                            viewModel.updateSetting("gitlab_url", it)
-                                        },
-                                        label = { Text("URL de GitLab", fontSize = 11.sp) },
-                                        placeholder = { Text("https://gitlab.com") },
-                                        shape = RoundedCornerShape(8.dp),
-                                        textStyle = LocalTextStyle.current.copy(fontSize = 11.sp),
-                                        modifier = Modifier.fillMaxWidth(),
-                                        singleLine = true
-                                    )
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    OutlinedTextField(
-                                        value = tempGitlabPat,
-                                        onValueChange = {
-                                            tempGitlabPat = it
-                                            viewModel.updateSetting("gitlab_pat", it)
-                                        },
-                                        label = { Text("Personal Access Token (PAT)", fontSize = 11.sp) },
-                                        visualTransformation = PasswordVisualTransformation(),
-                                        shape = RoundedCornerShape(8.dp),
-                                        textStyle = LocalTextStyle.current.copy(fontSize = 11.sp),
-                                        modifier = Modifier.fillMaxWidth(),
-                                        singleLine = true
-                                    )
-                                    Spacer(modifier = Modifier.height(6.dp))
-
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        TextButton(
-                                            onClick = {
-                                                oauthGitlabWorking = true
-                                                coroutineScope.launch {
-                                                    kotlinx.coroutines.delay(1200)
-                                                    oauthGitlabWorking = false
-                                                    tempGitlabPat = "glo_simulated_oauth_secret_token"
-                                                    viewModel.updateSetting("gitlab_pat", "glo_simulated_oauth_secret_token")
-                                                }
-                                            },
-                                            modifier = Modifier.height(32.dp),
-                                            contentPadding = PaddingValues(horizontal = 8.dp)
-                                        ) {
-                                            Text("Conectar vía OAuth (Simulado) 🔗", fontSize = 11.sp)
-                                        }
-
-                                        if (oauthGitlabWorking) {
-                                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                                        } else if (tempGitlabPat.startsWith("glo_")) {
-                                            Text("🟢 OAuth Conectado", fontSize = 10.sp, color = Color(0xFF10B981), fontWeight = FontWeight.Bold)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // INTERNET SEARCH & SCRAPER ENGINE CARD
-                        val internetSearchEnabled = settings["internet_search_enabled"] == "true"
-                        val searchProvider = settings["search_provider"] ?: "duckduckgo_scraper"
-
-                        Card(
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Column(modifier = Modifier.padding(12.dp)) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                                        Text("🌐", fontSize = 18.sp)
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Column {
-                                            Text("Búsqueda en Internet & Web Scraper", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                                            Text("Permite a Riso buscar en tiempo real y leer páginas web", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
-                                        }
-                                    }
-                                    Box(
-                                        modifier = Modifier.size(54.dp, 34.dp),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Switch(
-                                            checked = internetSearchEnabled,
-                                            onCheckedChange = { isChecked ->
-                                                viewModel.updateSetting("internet_search_enabled", if (isChecked) "true" else "false")
-                                            },
-                                            colors = SwitchDefaults.colors(
-                                                checkedThumbColor = MaterialTheme.colorScheme.primary,
-                                                checkedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f),
-                                            ),
-                                            modifier = Modifier.scale(0.75f).testTag("toggle_internet_search")
-                                        )
-                                    }
-                                }
-
-                                if (internetSearchEnabled) {
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
-                                    Spacer(modifier = Modifier.height(6.dp))
-
-                                    Text(
-                                        text = "Motor de Búsqueda & Scraper:",
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.padding(bottom = 6.dp)
-                                    )
-
-                                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        // 1. DuckDuckGo Scraper (Gratis y sin API key) - Opción por defecto recomendada
-                                        Row(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .clip(RoundedCornerShape(8.dp))
-                                                .clickable { viewModel.updateSetting("search_provider", "duckduckgo_scraper") }
-                                                .background(if (searchProvider == "duckduckgo_scraper") MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else Color.Transparent)
-                                                .padding(6.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            RadioButton(
-                                                selected = searchProvider == "duckduckgo_scraper",
-                                                onClick = { viewModel.updateSetting("search_provider", "duckduckgo_scraper") },
-                                                colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colorScheme.primary)
-                                            )
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                            Column {
-                                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                                    Text("DuckDuckGo Scraper (Libre)", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                                    Spacer(modifier = Modifier.width(6.dp))
-                                                    Text("✨ Sin API Key", fontSize = 8.sp, color = Color(0xFF10B981), fontWeight = FontWeight.Bold)
-                                                }
-                                                Text("Búsquedas web y raspado de URLs 100% gratuito y privado.", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
-                                            }
-                                        }
-
-                                        // 2. Google Search Grounding
-                                        Row(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .clip(RoundedCornerShape(8.dp))
-                                                .clickable { viewModel.updateSetting("search_provider", "google_grounding") }
-                                                .background(if (searchProvider == "google_grounding") MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else Color.Transparent)
-                                                .padding(6.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            RadioButton(
-                                                selected = searchProvider == "google_grounding",
-                                                onClick = { viewModel.updateSetting("search_provider", "google_grounding") },
-                                                colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colorScheme.primary)
-                                            )
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                            Column {
-                                                Text("Google Grounding (Gemini)", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                                Text("Grounding nativo con Gemini API Key.", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
-                                            }
-                                        }
-
-                                        // 3. Brave Search API
-                                        val hasBraveKey = !settings["brave_search_api_key"].isNullOrBlank()
-                                        Column(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .clip(RoundedCornerShape(8.dp))
-                                                .background(if (searchProvider == "brave") MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else Color.Transparent)
-                                                .padding(6.dp)
-                                        ) {
-                                            Row(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .clickable { viewModel.updateSetting("search_provider", "brave") },
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                RadioButton(
-                                                    selected = searchProvider == "brave",
-                                                    onClick = { viewModel.updateSetting("search_provider", "brave") },
-                                                    colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colorScheme.primary)
-                                                )
-                                                Spacer(modifier = Modifier.width(4.dp))
-                                                Column {
-                                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                                        Text("Brave Search API", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                                        Spacer(modifier = Modifier.width(6.dp))
-                                                        Text(
-                                                            text = if (hasBraveKey) "🔑 Configurado" else "⚠️ Requiere API Key",
-                                                            fontSize = 8.sp,
-                                                            color = if (hasBraveKey) Color(0xFF10B981) else Color.Red,
-                                                            fontWeight = FontWeight.Bold
-                                                        )
-                                                    }
-                                                    Text("Búsqueda indexada usando tu clave API de Brave.", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
-                                                }
-                                            }
-
-                                            if (searchProvider == "brave") {
-                                                Spacer(modifier = Modifier.height(6.dp))
-                                                OutlinedTextField(
-                                                    value = tempBraveApiKey,
-                                                    onValueChange = {
-                                                        tempBraveApiKey = it
-                                                        viewModel.updateSetting("brave_search_api_key", it)
-                                                    },
-                                                    label = { Text("Brave Search API Key", fontSize = 10.sp) },
-                                                    placeholder = { Text("BSA...", fontSize = 10.sp) },
-                                                    visualTransformation = PasswordVisualTransformation(),
-                                                    shape = RoundedCornerShape(8.dp),
-                                                    textStyle = LocalTextStyle.current.copy(fontSize = 11.sp),
-                                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
-                                                    singleLine = true
-                                                )
-                                            }
-                                        }
-
-                                        // Web page scraper indicator
-                                        Box(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .clip(RoundedCornerShape(6.dp))
-                                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.05f))
-                                                .padding(6.dp)
-                                        ) {
-                                            Text(
-                                                text = "⚡ Scraper automático incluido: Riso puede navegar y extraer texto limpio de cualquier página web o URL que le proporciones.",
-                                                fontSize = 9.sp,
-                                                color = MaterialTheme.colorScheme.primary,
-                                                fontWeight = FontWeight.SemiBold
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // SECTION: ADJUNTAR DESDE TU TELÉFONO (REAL DEVICE LAUNCHERS)
-                        Column {
-                            Text(
-                                text = "Adjuntar desde tu Teléfono",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(bottom = 6.dp)
-                            )
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                // Camera Option
-                                Card(
-                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.06f)),
-                                    shape = RoundedCornerShape(10.dp),
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .clickable {
-                                            try {
-                                                cameraLauncher.launch(null)
-                                            } catch (e: Exception) {
-                                                viewModel.attachCustomFile("Foto Simulada (Cámara)")
-                                            }
-                                            showAttachMenu = false
-                                        }
-                                        .padding(2.dp)
-                                ) {
-                                    Column(
-                                        modifier = Modifier.padding(10.dp).fillMaxWidth(),
-                                        horizontalAlignment = Alignment.CenterHorizontally
-                                    ) {
-                                        Text("📸", fontSize = 20.sp)
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        Text("Cámara", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                    }
-                                }
-
-                                // Gallery Option
-                                Card(
-                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.06f)),
-                                    shape = RoundedCornerShape(10.dp),
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .clickable {
-                                            try {
-                                                galleryLauncher.launch("image/*")
-                                            } catch (e: Exception) {
-                                                viewModel.attachCustomFile("Imagen Simulada (Galería)")
-                                            }
-                                            showAttachMenu = false
-                                        }
-                                        .padding(2.dp)
-                                ) {
-                                    Column(
-                                        modifier = Modifier.padding(10.dp).fillMaxWidth(),
-                                        horizontalAlignment = Alignment.CenterHorizontally
-                                    ) {
-                                        Text("🖼️", fontSize = 20.sp)
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        Text("Galería", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                    }
-                                }
-
-                                // File Option
-                                Card(
-                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.06f)),
-                                    shape = RoundedCornerShape(10.dp),
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .clickable {
-                                            try {
-                                                filePickerLauncher.launch("*/*")
-                                            } catch (e: Exception) {
-                                                viewModel.attachCustomFile("Documento Simulado")
-                                            }
-                                            showAttachMenu = false
-                                        }
-                                        .padding(2.dp)
-                                ) {
-                                    Column(
-                                        modifier = Modifier.padding(10.dp).fillMaxWidth(),
-                                        horizontalAlignment = Alignment.CenterHorizontally
-                                    ) {
-                                        Text("📂", fontSize = 20.sp)
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        Text("Archivo", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                    }
-                                }
-                            }
-                        }
-
-                        // SECTION 4: ATTACHMENTS FOR IA VISION
-                        Column {
-                            Text(
-                                text = "Archivos de Simulación para IA Visión",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.secondary,
-                                modifier = Modifier.padding(bottom = 6.dp)
-                            )
-                            listOf(
-                                Triple("recibo", "🧾 Recibo de Compra.png", "Extrae precios, total e impuestos"),
-                                Triple("menu", "🍽️ Menú de Restaurant.png", "Traduce platos clásicos franceses"),
-                                Triple("grafico", "📈 Gráfico de Métricas Q3.png", "Análisis cuantitativo de metas")
-                            ).forEach { (id, title, desc) ->
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 3.dp)
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .clickable {
-                                            viewModel.attachSampleImage(id)
-                                            showAttachMenu = false
-                                        }
-                                        .border(BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)), RoundedCornerShape(8.dp))
-                                        .padding(8.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column {
-                                        Text(title, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                        Text(desc, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Button(
-                        onClick = { showAttachMenu = false },
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Aceptar", fontWeight = FontWeight.Bold)
-                    }
+        McpConnectionsDialog(
+            viewModel = viewModel,
+            emailAccounts = emailAccounts,
+            githubAccounts = githubAccounts,
+            gitlabAccounts = gitlabAccounts,
+            settings = settings,
+            onLaunchCamera = {
+                try {
+                    cameraLauncher.launch(null)
+                } catch (e: Exception) {
+                    viewModel.attachCustomFile("Cámara: foto_capturada.png")
                 }
-            }
-        }
+            },
+            onLaunchGallery = {
+                try {
+                    galleryLauncher.launch("image/*")
+                } catch (e: Exception) {
+                    viewModel.attachCustomFile("Galería: imagen.png")
+                }
+            },
+            onLaunchFilePicker = {
+                try {
+                    filePickerLauncher.launch("*/*")
+                } catch (e: Exception) {
+                    viewModel.attachCustomFile("Archivo: documento.pdf")
+                }
+            },
+            onDismiss = { showAttachMenu = false }
+        )
     }
 }
 
@@ -1617,26 +987,28 @@ fun ChatMessageItem(
         ) {
             Box(
                 modifier = Modifier
-                    .fillMaxWidth(if (isUser) 0.85f else 0.9f)
+                    .fillMaxWidth()
                     .wrapContentWidth(if (isUser) Alignment.End else Alignment.Start)
             ) {
                 Card(
                     shape = RoundedCornerShape(
-                        topStart = 16.dp,
-                        topEnd = 16.dp,
-                        bottomStart = if (isUser) 16.dp else 2.dp,
-                        bottomEnd = if (isUser) 2.dp else 16.dp
+                        topStart = 14.dp,
+                        topEnd = 14.dp,
+                        bottomStart = if (isUser) 14.dp else 2.dp,
+                        bottomEnd = if (isUser) 2.dp else 14.dp
                     ),
                     colors = CardDefaults.cardColors(
-                        containerColor = if (isUser) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface
+                        containerColor = if (isUser) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
                     ),
-                    border = if (isUser) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-                    modifier = Modifier.padding(vertical = 2.dp)
+                    border = if (isUser) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.15f)),
+                    modifier = Modifier
+                        .widthIn(min = 36.dp, max = 295.dp)
+                        .padding(vertical = 1.dp)
                 ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
+                    Column(modifier = Modifier.padding(horizontal = 11.dp, vertical = 7.dp)) {
                         if (!isUser) {
                             Row(
-                                modifier = Modifier.padding(bottom = 6.dp),
+                                modifier = Modifier.padding(bottom = 3.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Box(
@@ -1645,29 +1017,29 @@ fun ChatMessageItem(
                                         .clip(CircleShape)
                                         .background(MaterialTheme.colorScheme.primary)
                                 )
-                                Spacer(modifier = Modifier.width(6.dp))
+                                Spacer(modifier = Modifier.width(5.dp))
                                 Text(
                                     text = "Riso Agent",
-                                    fontSize = 11.sp,
+                                    fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.primary,
-                                    letterSpacing = 1.sp
+                                    letterSpacing = 0.5.sp
                                 )
                             }
                         }
 
                         Text(
                             text = message.text,
-                            fontSize = 14.sp,
+                            fontSize = 13.sp,
                             color = if (isUser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
-                            lineHeight = 19.sp,
+                            lineHeight = 17.5.sp,
                         )
 
                         // If message is linked to a planning Mode Pending Action
                         if (message.pendingActionId != null) {
                             val action = pendingActions.find { it.id == message.pendingActionId }
                             if (action != null) {
-                                Spacer(modifier = Modifier.height(10.dp))
+                                Spacer(modifier = Modifier.height(8.dp))
                                 ActionPlanCard(
                                     action = action,
                                     onApprove = { onApprove(action.id) },
@@ -2166,7 +1538,7 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
     var newLlmName by remember { mutableStateOf("") }
     var newLlmProvider by remember { mutableStateOf("Google") }
     var newLlmEndpoint by remember { mutableStateOf("https://generativelanguage.googleapis.com") }
-    var newLlmModel by remember { mutableStateOf("gemini-1.5-flash") }
+    var newLlmModel by remember { mutableStateOf("gemini-3.5-flash") }
     var newLlmKey by remember { mutableStateOf("") }
     var newLlmTestMsg by remember { mutableStateOf<String?>(null) }
     var isTestingNewLlm by remember { mutableStateOf(false) }
@@ -2208,16 +1580,17 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
     ) {
         // App settings header
         item {
-            Column {
+            Column(modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)) {
                 Text(
                     text = t("settings_title_bold"),
-                    fontSize = 20.sp,
+                    fontSize = 17.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface
                 )
+                Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = t("settings_sub"),
-                    fontSize = 12.sp,
+                    fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                 )
             }
@@ -2228,63 +1601,122 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                shape = RoundedCornerShape(16.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
+                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
+                Column(modifier = Modifier.padding(14.dp)) {
                     Text(
                         text = t("language_settings"),
-                        fontSize = 15.sp,
+                        fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.primary
                     )
-                    Spacer(modifier = Modifier.height(4.dp))
+                    Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = t("language_settings_sub"),
-                        fontSize = 11.sp,
+                        fontSize = 10.5.sp,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                     )
                     Spacer(modifier = Modifier.height(10.dp))
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        // Spanish option
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
+                        Button(
+                            onClick = { viewModel.updateSetting("language", "es") },
                             modifier = Modifier
                                 .weight(1f)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(if (!isEn) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else Color.Transparent)
-                                .clickable { viewModel.updateSetting("language", "es") }
-                                .padding(8.dp)
+                                .height(36.dp),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (!isEn) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                contentColor = if (!isEn) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+                            ),
+                            border = if (!isEn) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
                         ) {
-                            RadioButton(
-                                selected = !isEn,
-                                onClick = { viewModel.updateSetting("language", "es") },
-                                colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colorScheme.primary)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Español 🇪🇸", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            Text("🇪🇸 Español", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
                         }
 
-                        // English option
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
+                        Button(
+                            onClick = { viewModel.updateSetting("language", "en") },
                             modifier = Modifier
                                 .weight(1f)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(if (isEn) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else Color.Transparent)
-                                .clickable { viewModel.updateSetting("language", "en") }
-                                .padding(8.dp)
+                                .height(36.dp),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isEn) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                contentColor = if (isEn) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+                            ),
+                            border = if (isEn) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
                         ) {
-                            RadioButton(
-                                selected = isEn,
-                                onClick = { viewModel.updateSetting("language", "en") },
-                                colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colorScheme.primary)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("English 🇬🇧", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            Text("🇬🇧 English", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+            }
+        }
+
+        // Section: Theme Selection Card
+        item {
+            val themeMode = settings["theme_mode"] ?: "light"
+            val isDark = themeMode == "dark"
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                shape = RoundedCornerShape(16.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
+                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Text(
+                        text = "Tema Visual",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = "Selecciona el aspecto visual de la interfaz",
+                        fontSize = 10.5.sp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Button(
+                            onClick = { viewModel.updateSetting("theme_mode", "light") },
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(36.dp),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (!isDark) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                contentColor = if (!isDark) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+                            ),
+                            border = if (!isDark) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
+                        ) {
+                            Text("☀️ Modo Claro", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                        }
+
+                        Button(
+                            onClick = { viewModel.updateSetting("theme_mode", "dark") },
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(36.dp),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isDark) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                contentColor = if (isDark) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+                            ),
+                            border = if (isDark) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
+                        ) {
+                            Text("🌙 Modo Oscuro", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
                         }
                     }
                 }
@@ -2299,22 +1731,24 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                shape = RoundedCornerShape(16.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
+                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
+                Column(modifier = Modifier.padding(14.dp)) {
                     Text(
                         text = "Modelos LLM (APIs)",
-                        fontSize = 15.sp,
+                        fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.primary
                     )
-                    Spacer(modifier = Modifier.height(3.dp))
+                    Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = "Configura proveedores (Google, Anthropic, OpenAI o compatible), endpoint y modelo. Elige cuál usar por defecto.",
-                        fontSize = 11.sp,
+                        fontSize = 10.5.sp,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                     )
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
 
                     // List of existing LLM profiles
                     if (llmProfiles.isEmpty()) {
@@ -2477,7 +1911,7 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
                             OutlinedTextField(
                                 value = newLlmName,
                                 onValueChange = { newLlmName = it },
-                                label = { Text("Nombre (ej: Gemini 1.5 Flash)", fontSize = 11.sp) },
+                                label = { Text("Nombre (ej: Gemini 3.5 Flash)", fontSize = 11.sp) },
                                 shape = RoundedCornerShape(8.dp),
                                 modifier = Modifier.fillMaxWidth().testTag("new_llm_name_input"),
                                 singleLine = true
@@ -2490,7 +1924,7 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
                                 horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
                                 listOf(
-                                    "Google" to ("https://generativelanguage.googleapis.com" to "gemini-1.5-flash"),
+                                    "Google" to ("https://generativelanguage.googleapis.com" to "gemini-3.5-flash"),
                                     "Anthropic" to ("https://api.anthropic.com/v1" to "claude-3-5-sonnet-20240620"),
                                     "OpenAI" to ("https://api.openai.com/v1" to "gpt-4o-mini"),
                                     "Compatible" to ("https://api.openai.com/v1" to "")
@@ -2643,22 +2077,24 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                shape = RoundedCornerShape(16.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
+                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
+                Column(modifier = Modifier.padding(14.dp)) {
                     Text(
                         text = "Reconocimiento de Voz (STT)",
-                        fontSize = 15.sp,
+                        fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.primary
                     )
-                    Spacer(modifier = Modifier.height(3.dp))
+                    Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = "Configura Whisper API Remoto o Whisper Local sin conexión. Elige cuál usar por defecto.",
-                        fontSize = 11.sp,
+                        fontSize = 10.5.sp,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                     )
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
 
                     // List of existing STT profiles
                     if (sttProfiles.isEmpty()) {
@@ -3006,19 +2442,21 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                shape = RoundedCornerShape(16.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
+                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
+                Column(modifier = Modifier.padding(14.dp)) {
                     Text(
                         text = "Búsqueda Web (Opcional)",
-                        fontSize = 15.sp,
+                        fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.primary
                     )
-                    Spacer(modifier = Modifier.height(3.dp))
+                    Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = "API Key de Brave Search para consultar internet en tiempo real.",
-                        fontSize = 11.sp,
+                        fontSize = 10.5.sp,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                     )
                     Spacer(modifier = Modifier.height(10.dp))
@@ -3042,35 +2480,45 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
             }
         }
 
-
-
         // Section 4: Connection tester
         item {
             Card(
                 modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                shape = RoundedCornerShape(16.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
+                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
+                Column(modifier = Modifier.padding(14.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "Probar Cuenta de Correo Activa",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
+                        Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                            Text(
+                                text = "Probar Cuenta de Correo Activa",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = "Verifica autenticación IMAP/SMTP",
+                                fontSize = 10.5.sp,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                            )
+                        }
 
                         Button(
                             onClick = { viewModel.testEmailAuth() },
-                            modifier = Modifier.testTag("settings_test_connection_button"),
+                            modifier = Modifier
+                                .height(34.dp)
+                                .testTag("settings_test_connection_button"),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = MaterialTheme.colorScheme.primary,
                                 contentColor = MaterialTheme.colorScheme.onPrimary
                             ),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
                             shape = RoundedCornerShape(8.dp)
                         ) {
                             if (isTesting) {
@@ -3085,7 +2533,7 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
                         Spacer(modifier = Modifier.height(10.dp))
                         Text(
                             text = testResult!!,
-                            fontSize = 12.sp,
+                            fontSize = 11.5.sp,
                             fontFamily = FontFamily.Monospace,
                             color = if (testResult!!.startsWith("¡Conexión IMAP Exitosa")) Color(0xFF10B981) else MaterialTheme.colorScheme.tertiary
                         )
@@ -3099,22 +2547,24 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
+                shape = RoundedCornerShape(16.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
+                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
+                Column(modifier = Modifier.padding(14.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("🛡️", fontSize = 18.sp)
                         Spacer(modifier = Modifier.width(8.dp))
                         Column {
                             Text(
                                 text = t("privacy_policy_title"),
-                                fontSize = 14.sp,
+                                fontSize = 13.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.primary
                             )
                             Text(
                                 text = t("privacy_policy_sub"),
-                                fontSize = 10.sp,
+                                fontSize = 10.5.sp,
                                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                             )
                         }
@@ -3130,23 +2580,26 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
                             onClick = { showPrivacyDialog = true },
                             modifier = Modifier
                                 .weight(1f)
+                                .height(36.dp)
                                 .testTag("btn_view_privacy_policy"),
                             shape = RoundedCornerShape(8.dp)
                         ) {
-                            Text(t("privacy_btn"), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                            Text(t("privacy_btn"), fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold)
                         }
 
                         Button(
                             onClick = { showDeleteDataDialog = true },
                             modifier = Modifier
                                 .weight(1f)
-                                .testTag("btn_delete_all_user_data"),
+                                .height(36.dp)
+                                .testTag("btn_delete_all_data"),
+                            shape = RoundedCornerShape(8.dp),
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.9f)
-                            ),
-                            shape = RoundedCornerShape(8.dp)
+                                containerColor = MaterialTheme.colorScheme.error,
+                                contentColor = MaterialTheme.colorScheme.onError
+                            )
                         ) {
-                            Text(t("delete_all_data_btn"), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            Text(t("delete_all_data_btn"), fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold)
                         }
                     }
                 }

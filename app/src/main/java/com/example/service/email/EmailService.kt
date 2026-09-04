@@ -29,12 +29,44 @@ data class EmailAccount(
     val imapPort: String = "993",
     val smtpServer: String,
     val smtpPort: String = "587",
-    val passwordVal: String
+    val passwordVal: String,
+    val isEnabled: Boolean = true
 )
 
 class EmailService(private val repository: RisoRepository) {
 
     private val TAG = "EmailService"
+
+    suspend fun testEmailAccountConnection(acc: EmailAccount): Pair<Boolean, String> = withContext(Dispatchers.IO) {
+        if (acc.emailAddress.isBlank() || acc.passwordVal.isBlank()) {
+            return@withContext Pair(false, "Credenciales vacías")
+        }
+        try {
+            val props = Properties().apply {
+                put("mail.store.protocol", "imaps")
+                put("mail.imaps.host", acc.imapServer.ifBlank { "imap.gmail.com" })
+                put("mail.imaps.port", acc.imapPort.ifBlank { "993" })
+                put("mail.imaps.ssl.enable", "true")
+                put("mail.imaps.connectiontimeout", "5000")
+                put("mail.imaps.timeout", "5000")
+            }
+            val session = Session.getInstance(props, null)
+            val store = session.getStore("imaps")
+            store.connect(acc.imapServer.ifBlank { "imap.gmail.com" }, acc.emailAddress, acc.passwordVal)
+            val inbox = store.getFolder("INBOX")
+            val count = try {
+                inbox.open(Folder.READ_ONLY)
+                val c = inbox.messageCount
+                inbox.close(false)
+                c
+            } catch (e: Exception) { 0 }
+            store.close()
+            Pair(true, "Conectado ($count mensajes)")
+        } catch (e: Exception) {
+            val msg = e.localizedMessage ?: "Fallo de autenticación IMAP"
+            Pair(false, if (msg.length > 50) msg.take(50) + "..." else msg)
+        }
+    }
 
     private suspend fun getActiveCredentials(): Map<String, String> {
         val activeId = repository.getSetting("active_email_account_id") ?: ""
@@ -77,7 +109,7 @@ class EmailService(private val repository: RisoRepository) {
         RisoEmail(
             id = "msg_101",
             sender = "ana.perez@empresa.com",
-            recipient = "usuario@riso.local",
+            recipient = "",
             subject = "Reunión del Proyecto Riso - Urgente",
             snippet = "Hola team, necesitamos reconfirmar los entregables de Riso para este viernes...",
             body = "Hola team,\n\nNecesitamos reconfirmar los entregables de Riso para este viernes. Por favor, revisen el roadmap y avísenme si tienen comentarios. La presentación principal es a las 10:00 AM.\n\nSaludos,\nAna Pérez\nProject Leader",
@@ -87,7 +119,7 @@ class EmailService(private val repository: RisoRepository) {
         RisoEmail(
             id = "msg_102",
             sender = "marketing@ofertas.com",
-            recipient = "usuario@riso.local",
+            recipient = "",
             subject = "¡Última oportunidad! 50% de descuento en servidores cloud",
             snippet = "Mejora tus despliegues hoy mismo con nuestro cupón exclusivo RISOCLOUD...",
             body = "Estimado cliente,\n\nNo dejes pasar esta gran oferta. Usa el cupón RISOCLOUD para obtener 50% de descuento mensual en tus instancias de servidor cloud. Válido hasta la medianoche.\n\nSuscríbete ya.",
@@ -97,7 +129,7 @@ class EmailService(private val repository: RisoRepository) {
         RisoEmail(
             id = "msg_103",
             sender = "coordinacion@universidad.edu.ar",
-            recipient = "usuario@riso.local",
+            recipient = "",
             subject = "Certificado Analítico Digital Disponible",
             snippet = "Estimado alumno, le informamos que el reporte académico ha sido cargado en su portal...",
             body = "Estimando alumno,\n\nLe informamos que su Certificado Analítico Digital ya se encuentra listo para descargar en su panel general de autogestión.\n\nAtentamente,\nSecretaría Académica",
@@ -107,7 +139,7 @@ class EmailService(private val repository: RisoRepository) {
         RisoEmail(
             id = "msg_104",
             sender = "juan.marquez@tecnologia.com",
-            recipient = "usuario@riso.local",
+            recipient = "",
             subject = "Presupuestos de Licenciamiento",
             snippet = "Hola, adjunto los montos finales para la renovación de las API keys empresariales...",
             body = "Hola Juan,\n\nAquí tienes las estimaciones finales para renovar las API en la nube para el próximo semestre. Por favor revísalo con la mesa de control.\n\nSaludos cordiales.",
@@ -129,7 +161,7 @@ class EmailService(private val repository: RisoRepository) {
             // Mock send addition
             val newMock = RisoEmail(
                 id = "msg_sent_" + System.currentTimeMillis(),
-                sender = email.ifBlank { "usuario@riso.local" },
+                sender = email.ifBlank { "yo" },
                 recipient = to,
                 subject = subject,
                 snippet = if (body.length > 60) body.substring(0, 60) + "..." else body,

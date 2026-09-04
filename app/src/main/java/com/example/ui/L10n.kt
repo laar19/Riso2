@@ -12,7 +12,7 @@ object L10n {
     private val es = mapOf(
         "app_title" to "Riso",
         "chat_agent" to "Agente Riso",
-        "local_offline" to "100% Local y Offline",
+        "local_offline" to "Asistente IA & Correo",
         "llm_header" to "Motor de Inteligencia (LLM)",
         "voice_header" to "Motor de Voz (STT)",
         "download_whisper_warn" to "⚠️ Whisper Local no está descargado.",
@@ -34,7 +34,7 @@ object L10n {
         "cancel" to "CANCELAR",
         "settings_title" to "Ajustes y Cuentas",
         "settings_title_bold" to "Ajustes de Cuenta y API Keys",
-        "settings_sub" to "Configura tus credenciales. Los tokens se cifran al 100% de forma local en tu Android Keystore.",
+        "settings_sub" to "Configura tus credenciales y APIs. La información sensible se almacena de forma segura en tu dispositivo.",
         "language_settings" to "Idioma (Language)",
         "language_settings_sub" to "Cambia el idioma de la interfaz del Agente Riso",
         "apis_config" to "Configuración APIs LLM y Voz (STT)",
@@ -97,7 +97,7 @@ object L10n {
         "planning_mode_inactive" to "⚡ Modo Ejecución",
         "planning_mode_active" to "🛡️ Modo Planificación",
         "privacy_policy_title" to "Transparencia y Privacidad de Datos",
-        "privacy_policy_sub" to "Conforme a las Políticas de Google Play: tus datos residen 100% en tu dispositivo.",
+        "privacy_policy_sub" to "Conforme a las Políticas de Google Play: tus claves y datos residen de forma privada en tu dispositivo.",
         "privacy_btn" to "Ver Política de Privacidad",
         "delete_all_data_btn" to "Eliminar Todos Mis Datos de la App",
         "delete_all_data_confirm" to "¿Estás seguro de que deseas eliminar todas las cuentas, sesiones y credenciales? Esta acción es irreversible."
@@ -106,7 +106,7 @@ object L10n {
     private val en = mapOf(
         "app_title" to "Riso",
         "chat_agent" to "Riso Agent",
-        "local_offline" to "100% Local & Offline",
+        "local_offline" to "AI & Email Assistant",
         "llm_header" to "Intelligence Engine (LLM)",
         "voice_header" to "Voice Engine (STT)",
         "download_whisper_warn" to "⚠️ Local Whisper is not downloaded.",
@@ -128,7 +128,7 @@ object L10n {
         "cancel" to "CANCEL",
         "settings_title" to "Settings & Accounts",
         "settings_title_bold" to "Account Settings & API Keys",
-        "settings_sub" to "Configure your credentials. Tokens are 100% locally encrypted in your Android Keystore.",
+        "settings_sub" to "Configure your credentials and APIs. Sensitive keys are stored securely on your device.",
         "language_settings" to "Language (Idioma)",
         "language_settings_sub" to "Change the user interface language of Riso Agent",
         "apis_config" to "LLM and Voice (STT) APIs Configuration",
@@ -191,7 +191,7 @@ object L10n {
         "planning_mode_inactive" to "⚡ Execution Mode",
         "planning_mode_active" to "🛡️ Planning Mode",
         "privacy_policy_title" to "Data Privacy & Transparency",
-        "privacy_policy_sub" to "Compliant with Google Play Policies: your data stays 100% on your device.",
+        "privacy_policy_sub" to "Compliant with Google Play Policies: your keys and data are stored privately on your device.",
         "privacy_btn" to "View Privacy Policy",
         "delete_all_data_btn" to "Delete All My App Data",
         "delete_all_data_confirm" to "Are you sure you want to permanently delete all accounts, chat history, and stored API keys? This action cannot be undone."

@@ -17,8 +17,20 @@ interface RisoDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertSession(session: ChatSession)
 
+    @Query("UPDATE chat_sessions SET title = :title WHERE id = :sessionId")
+    suspend fun updateSessionTitle(sessionId: String, title: String)
+
     @Query("DELETE FROM chat_sessions WHERE id = :sessionId")
     suspend fun deleteSessionById(sessionId: String)
+
+    @Query("SELECT COUNT(*) FROM chat_messages WHERE sessionId = :sessionId")
+    suspend fun getMessageCountForSession(sessionId: String): Int
+
+    @Query("DELETE FROM chat_sessions WHERE id NOT IN (SELECT DISTINCT sessionId FROM chat_messages)")
+    suspend fun deleteEmptySessions()
+
+    @Query("DELETE FROM chat_sessions WHERE id NOT IN (SELECT DISTINCT sessionId FROM chat_messages) AND id != :exceptSessionId")
+    suspend fun deleteEmptySessionsExcept(exceptSessionId: String)
 
     // Chat Messages
     @Query("SELECT * FROM chat_messages WHERE sessionId = :sessionId ORDER BY timestamp ASC")

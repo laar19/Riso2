@@ -361,8 +361,9 @@ class LlmService {
 
         val isGemini = provider.lowercase().contains("gemini")
         if (isGemini && isKeyInvalidOrPlaceholder(resolvedKey)) {
-            Log.e(TAG, "Gemini API Key is empty or placeholder! Please configure it in Settings.")
-            return getErrorResponse("⚠️ **Clave de API de Gemini No Configurada**\n\nNo se ha detectado una clave de API válida para Gemini.\n\nPor favor, ve a **Ajustes** en el menú lateral e introduce tu API Key de Google AI Studio, o configúrala en el archivo de secretos del proyecto.")
+            Log.w(TAG, "Gemini API Key is not configured or is placeholder. Providing offline guidance.")
+            val lastUserMessage = history.lastOrNull { it.role == "user" }?.parts?.firstOrNull()?.text ?: ""
+            return getErrorResponse(getOfflineAssistantResponse(lastUserMessage))
         }
 
         try {
@@ -409,7 +410,7 @@ class LlmService {
                     generationConfig = GeminiGenerationConfig(temperature = 0.4f)
                 )
 
-                val modelToUse = if (!modelName.isNullOrBlank()) modelName else "gemini-1.5-flash"
+                val modelToUse = if (!modelName.isNullOrBlank()) modelName else "gemini-3.5-flash"
                 return api.generateContent(model = modelToUse, key = resolvedKey, request = request)
             } else {
                 // Return a simulated, high-quality representation for OpenAI/Claude if keys are provided or simulate via Gemini
@@ -440,8 +441,31 @@ class LlmService {
                 }
             }
         } catch (e: Throwable) {
-            Log.e(TAG, "Error in resolveLlm: ${e.message}", e)
+            Log.w(TAG, "Notice in resolveLlm: ${e.message}")
             return getErrorResponse("⚠️ **Error de Conexión o Servicio**\n\nNo se pudo obtener respuesta del resolvedor de IA. Detalles: ${e.localizedMessage ?: e.message ?: "Error desconocido de red"}\n\nPor favor, verifica tu conexión a internet o comprueba si tu clave de API configurada es correcta.")
+        }
+    }
+
+    private fun getOfflineAssistantResponse(userMessage: String): String {
+        val lower = userMessage.lowercase()
+        val isGreeting = lower.contains("hola") || lower.contains("buenos") || lower.contains("buenas") || lower.contains("saludos") || lower.contains("quien eres") || lower.contains("qué eres")
+        val isEmail = lower.contains("correo") || lower.contains("email") || lower.contains("bandeja") || lower.contains("inbox") || lower.contains("mensaje")
+        val isSettings = lower.contains("clave") || lower.contains("api") || lower.contains("key") || lower.contains("ajustes") || lower.contains("configurar")
+
+        return buildString {
+            if (isGreeting) {
+                append("¡Hola! Soy **Riso**, tu asistente de automatización y correos para Android.\n\n")
+            } else if (isEmail) {
+                append("Puedo ayudarte a revisar, redactar y organizar tus correos con soporte MCP. Puedes ver tu bandeja de entrada en la pestaña **Bandeja**.\n\n")
+            } else if (isSettings) {
+                append("Puedes configurar tus claves de API y modelos en la pestaña **Ajustes**.\n\n")
+            } else {
+                append("He recibido tu mensaje: \"$userMessage\".\n\nActualmente estoy operando en **Modo Asistente Local**.\n\n")
+            }
+            append("💡 **Para activar respuestas generativas completas con Gemini:**\n")
+            append("1. Abre la pestaña **Ajustes** en el menú inferior.\n")
+            append("2. En **Modelos LLM (APIs)**, ingresa tu clave API de Google Gemini.\n")
+            append("3. También puedes ingresar tu clave en el panel de Secretos de AI Studio.")
         }
     }
 

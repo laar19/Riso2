@@ -12,6 +12,8 @@ import com.example.data.repository.RisoRepository
 import com.example.service.email.EmailService
 import com.example.service.email.RisoEmail
 import com.example.service.email.EmailAccount
+import com.example.data.model.GithubAccount
+import com.example.data.model.GitlabAccount
 import com.example.service.llm.*
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
@@ -81,6 +83,10 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
     val emailAccounts = MutableStateFlow<List<EmailAccount>>(emptyList())
     val activeEmailAccountId = MutableStateFlow<String?>(null)
 
+    // Multiple GitHub & GitLab Accounts States (MCP)
+    val githubAccounts = MutableStateFlow<List<GithubAccount>>(emptyList())
+    val gitlabAccounts = MutableStateFlow<List<GitlabAccount>>(emptyList())
+
     // Multiple LLM Profiles / API keys cada uno
     val llmProfiles = MutableStateFlow<List<LlmProfile>>(emptyList())
     val activeLlmProfileId = MutableStateFlow<String?>(null)
@@ -120,93 +126,102 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
             val accountsJson = repository.getSetting("email_accounts_json") ?: ""
             val activeId = repository.getSetting("active_email_account_id") ?: ""
             if (accountsJson.isNotBlank()) {
-                val parsed = parseEmailAccounts(accountsJson)
+                val parsed = parseEmailAccounts(accountsJson).filter { !it.emailAddress.contains("riso.local", ignoreCase = true) }
                 emailAccounts.value = parsed
                 if (parsed.any { it.id == activeId }) {
                     activeEmailAccountId.value = activeId
                 } else if (parsed.isNotEmpty()) {
                     activeEmailAccountId.value = parsed.first().id
                     repository.saveSetting("active_email_account_id", parsed.first().id)
+                } else {
+                    activeEmailAccountId.value = null
+                    repository.saveSetting("active_email_account_id", "")
                 }
             } else {
-                // Seed a default account
-                val legacyEmail = repository.getSetting("email_address") ?: "usuario@riso.local"
-                val defaultAcc = EmailAccount(
-                    id = "default_acc",
-                    emailAddress = legacyEmail,
-                    imapServer = repository.getSetting("imap_server") ?: "",
-                    imapPort = "993",
-                    smtpServer = repository.getSetting("smtp_server") ?: "",
-                    smtpPort = "587",
-                    passwordVal = repository.getSetting("email_password") ?: ""
-                )
-                val newList = listOf(defaultAcc)
-                emailAccounts.value = newList
-                activeEmailAccountId.value = "default_acc"
-                saveEmailAccountsToDb(newList)
-                repository.saveSetting("active_email_account_id", "default_acc")
+                val legacyEmail = repository.getSetting("email_address") ?: ""
+                if (legacyEmail.isNotBlank() && !legacyEmail.contains("riso.local", ignoreCase = true)) {
+                    val defaultAcc = EmailAccount(
+                        id = "default_acc",
+                        emailAddress = legacyEmail,
+                        imapServer = repository.getSetting("imap_server") ?: "",
+                        imapPort = "993",
+                        smtpServer = repository.getSetting("smtp_server") ?: "",
+                        smtpPort = "587",
+                        passwordVal = repository.getSetting("email_password") ?: ""
+                    )
+                    val newList = listOf(defaultAcc)
+                    emailAccounts.value = newList
+                    activeEmailAccountId.value = "default_acc"
+                    saveEmailAccountsToDb(newList)
+                    repository.saveSetting("active_email_account_id", "default_acc")
+                } else {
+                    emailAccounts.value = emptyList()
+                    activeEmailAccountId.value = null
+                    repository.saveSetting("active_email_account_id", "")
+                }
             }
 
-            // Load Multi-Model setup
+            // Load Multi-Model setup (User explicitly requested: NO DEFAULT MODEL!)
             val profilesJson = repository.getSetting("llm_profiles_json") ?: ""
             val activeProfId = repository.getSetting("active_llm_profile_id") ?: ""
             if (profilesJson.isNotBlank()) {
-                val parsed = parseLlmProfiles(profilesJson)
+                val parsed = parseLlmProfiles(profilesJson).filter {
+                    it.id != "init_gemini" || it.apiKey.isNotBlank()
+                }
                 llmProfiles.value = parsed
                 if (parsed.any { it.id == activeProfId }) {
                     activeLlmProfileId.value = activeProfId
                 } else if (parsed.isNotEmpty()) {
                     activeLlmProfileId.value = parsed.first().id
                     repository.saveSetting("active_llm_profile_id", parsed.first().id)
+                } else {
+                    activeLlmProfileId.value = null
+                    repository.saveSetting("active_llm_profile_id", "")
                 }
             } else {
-                // Seed standard/existing ones
-                val initList = mutableListOf<LlmProfile>()
-                val geminiApiKey = repository.getSetting("gemini_api_key") ?: ""
-                initList.add(
-                    LlmProfile(
-                        id = "init_gemini",
-                        name = "Gemini Oficial",
-                        provider = "Gemini",
-                        apiKey = geminiApiKey,
-                        apiEndpoint = "https://generativelanguage.googleapis.com",
-                        modelName = "gemini-1.5-flash"
+                // User prompt: "quitagemini como modelo pro defecto prioque n otengo mdoelo por defecto alguno"
+                llmProfiles.value = emptyList()
+                activeLlmProfileId.value = null
+                repository.saveSetting("active_llm_profile_id", "")
+            }
+
+            // Load GitHub & GitLab Accounts setup
+            val githubJson = repository.getSetting("github_accounts_json") ?: ""
+            if (githubJson.isNotBlank()) {
+                githubAccounts.value = parseGithubAccounts(githubJson)
+            } else {
+                val legacyPat = repository.getSetting("github_pat") ?: ""
+                val legacyUser = repository.getSetting("github_username") ?: ""
+                if (legacyPat.isNotBlank() || legacyUser.isNotBlank()) {
+                    val initialAcc = GithubAccount(
+                        username = legacyUser,
+                        token = legacyPat,
+                        label = "GitHub Personal",
+                        isEnabled = true
                     )
-                )
-                
-                val openaiApiKey = repository.getSetting("openai_api_key") ?: ""
-                if (openaiApiKey.isNotBlank()) {
-                    initList.add(
-                        LlmProfile(
-                            id = "init_openai",
-                            name = "OpenAI Standard",
-                            provider = "OpenAI",
-                            apiKey = openaiApiKey,
-                            apiEndpoint = "https://api.openai.com/v1",
-                            modelName = "gpt-4o-mini"
-                        )
-                    )
+                    val list = listOf(initialAcc)
+                    githubAccounts.value = list
+                    saveGithubAccountsToDb(list)
                 }
-                
-                val claudeApiKey = repository.getSetting("claude_api_key") ?: ""
-                if (claudeApiKey.isNotBlank()) {
-                    initList.add(
-                        LlmProfile(
-                            id = "init_claude",
-                            name = "Claude Anthropic",
-                            provider = "Claude",
-                            apiKey = claudeApiKey,
-                            apiEndpoint = "https://api.anthropic.com/v1",
-                            modelName = "claude-3-5-sonnet-20240620"
-                        )
+            }
+
+            val gitlabJson = repository.getSetting("gitlab_accounts_json") ?: ""
+            if (gitlabJson.isNotBlank()) {
+                gitlabAccounts.value = parseGitlabAccounts(gitlabJson)
+            } else {
+                val legacyUrl = repository.getSetting("gitlab_url") ?: ""
+                val legacyPat = repository.getSetting("gitlab_pat") ?: ""
+                if (legacyPat.isNotBlank()) {
+                    val initialAcc = GitlabAccount(
+                        instanceUrl = legacyUrl.ifBlank { "https://gitlab.com" },
+                        username = "",
+                        token = legacyPat,
+                        label = "GitLab Personal",
+                        isEnabled = true
                     )
-                }
-                
-                llmProfiles.value = initList
-                if (initList.isNotEmpty()) {
-                    activeLlmProfileId.value = initList.first().id
-                    repository.saveSetting("active_llm_profile_id", initList.first().id)
-                    saveLlmProfilesToDb(initList)
+                    val list = listOf(initialAcc)
+                    gitlabAccounts.value = list
+                    saveGitlabAccountsToDb(list)
                 }
             }
 
@@ -261,10 +276,17 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                 saveSttProfilesToDb(initStt)
             }
             
+            // Purge leftover empty sessions on launch
+            repository.deleteEmptySessions()
+
             // Auto create session if empty
             sessions.first { true } // Suspend until first load
             if (sessions.value.isEmpty()) {
-                createNewSession()
+                val activeId = activeLlmProfileId.value ?: ""
+                val activeProf = llmProfiles.value.find { it.id == activeId }
+                val provider = activeProf?.name ?: "Sin modelo"
+                val session = repository.createSession("Chat Automatizado Riso", provider)
+                _selectedSessionId.value = session.id
             } else {
                 _selectedSessionId.value = sessions.value.first().id
             }
@@ -288,7 +310,8 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                         imapPort = obj.optString("imapPort", "993"),
                         smtpServer = obj.getString("smtpServer"),
                         smtpPort = obj.optString("smtpPort", "587"),
-                        passwordVal = obj.getString("passwordVal")
+                        passwordVal = obj.getString("passwordVal"),
+                        isEnabled = obj.optBoolean("isEnabled", true)
                     )
                 )
             }
@@ -310,6 +333,7 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                 obj.put("smtpServer", acc.smtpServer)
                 obj.put("smtpPort", acc.smtpPort)
                 obj.put("passwordVal", acc.passwordVal)
+                obj.put("isEnabled", acc.isEnabled)
                 array.put(obj)
             }
             viewModelScope.launch {
@@ -328,6 +352,27 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun toggleEmailAccount(id: String) {
+        val updated = emailAccounts.value.map {
+            if (it.id == id) it.copy(isEnabled = !it.isEnabled) else it
+        }
+        emailAccounts.value = updated
+        saveEmailAccountsToDb(updated)
+    }
+
+    fun setAllEmailAccountsEnabled(enabled: Boolean) {
+        val updated = emailAccounts.value.map { it.copy(isEnabled = enabled) }
+        emailAccounts.value = updated
+        saveEmailAccountsToDb(updated)
+    }
+
+    fun testEmailAccount(account: EmailAccount, onResult: (Boolean, String) -> Unit) {
+        viewModelScope.launch {
+            val res = emailService.testEmailAccountConnection(account)
+            onResult(res.first, res.second)
+        }
+    }
+
     fun addEmailAccount(
         emailAddress: String,
         imapServer: String,
@@ -339,19 +384,19 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
         if (emailAddress.isBlank()) return
         val newAcc = EmailAccount(
             id = UUID.randomUUID().toString(),
-            emailAddress = emailAddress,
-            imapServer = imapServer,
+            emailAddress = emailAddress.trim(),
+            imapServer = imapServer.ifBlank { "imap.gmail.com" },
             imapPort = imapPort.ifBlank { "993" },
-            smtpServer = smtpServer,
+            smtpServer = smtpServer.ifBlank { "smtp.gmail.com" },
             smtpPort = smtpPort.ifBlank { "587" },
-            passwordVal = passwordVal
+            passwordVal = passwordVal,
+            isEnabled = true
         )
         val updated = emailAccounts.value + newAcc
         emailAccounts.value = updated
         saveEmailAccountsToDb(updated)
-        if (activeEmailAccountId.value == null || activeEmailAccountId.value == "default_acc" && emailAccounts.value.size <= 2) {
-            selectActiveEmailAccount(newAcc.id)
-        }
+        // Automatically select the newly added account
+        selectActiveEmailAccount(newAcc.id)
     }
 
     fun removeEmailAccount(id: String) {
@@ -366,6 +411,236 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                 viewModelScope.launch {
                     repository.deleteSetting("active_email_account_id")
                 }
+            }
+        }
+    }
+
+    // --- MCP GITHUB MULTI-ACCOUNT MANAGEMENT ---
+    private fun parseGithubAccounts(json: String): List<GithubAccount> {
+        val list = mutableListOf<GithubAccount>()
+        try {
+            val array = org.json.JSONArray(json)
+            for (i in 0 until array.length()) {
+                val obj = array.getJSONObject(i)
+                list.add(
+                    GithubAccount(
+                        id = obj.optString("id", UUID.randomUUID().toString()),
+                        username = obj.optString("username"),
+                        token = obj.optString("token"),
+                        label = obj.optString("label", "GitHub"),
+                        isEnabled = obj.optBoolean("isEnabled", true)
+                    )
+                )
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error parsing github accounts", e)
+        }
+        return list
+    }
+
+    private fun saveGithubAccountsToDb(list: List<GithubAccount>) {
+        try {
+            val array = org.json.JSONArray()
+            for (acc in list) {
+                val obj = org.json.JSONObject()
+                obj.put("id", acc.id)
+                obj.put("username", acc.username)
+                obj.put("token", acc.token)
+                obj.put("label", acc.label)
+                obj.put("isEnabled", acc.isEnabled)
+                array.put(obj)
+            }
+            viewModelScope.launch {
+                repository.saveSetting("github_accounts_json", array.toString())
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error saving github accounts", e)
+        }
+    }
+
+    fun addGithubAccount(username: String, token: String, label: String = "GitHub Personal") {
+        if (username.isBlank() && token.isBlank()) return
+        val newAcc = GithubAccount(
+            id = UUID.randomUUID().toString(),
+            username = username.trim(),
+            token = token.trim(),
+            label = label.ifBlank { "GitHub Personal" },
+            isEnabled = true
+        )
+        val updated = githubAccounts.value + newAcc
+        githubAccounts.value = updated
+        saveGithubAccountsToDb(updated)
+        viewModelScope.launch {
+            repository.saveSetting("github_username", username.trim())
+            repository.saveSetting("github_pat", token.trim())
+        }
+    }
+
+    fun removeGithubAccount(id: String) {
+        val updated = githubAccounts.value.filter { it.id != id }
+        githubAccounts.value = updated
+        saveGithubAccountsToDb(updated)
+    }
+
+    fun toggleGithubAccount(id: String) {
+        val updated = githubAccounts.value.map {
+            if (it.id == id) it.copy(isEnabled = !it.isEnabled) else it
+        }
+        githubAccounts.value = updated
+        saveGithubAccountsToDb(updated)
+    }
+
+    fun setAllGithubAccountsEnabled(enabled: Boolean) {
+        val updated = githubAccounts.value.map { it.copy(isEnabled = enabled) }
+        githubAccounts.value = updated
+        saveGithubAccountsToDb(updated)
+    }
+
+    fun testGithubConnection(token: String, username: String, onResult: (Boolean, String) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            if (token.isBlank()) {
+                withContext(Dispatchers.Main) { onResult(false, "Token PAT vacío") }
+                return@launch
+            }
+            try {
+                val client = okhttp3.OkHttpClient.Builder()
+                    .connectTimeout(5, TimeUnit.SECONDS)
+                    .readTimeout(5, TimeUnit.SECONDS)
+                    .build()
+                val request = okhttp3.Request.Builder()
+                    .url("https://api.github.com/user")
+                    .header("Authorization", "Bearer ${token.trim()}")
+                    .header("Accept", "application/vnd.github+json")
+                    .header("User-Agent", "Riso-Android")
+                    .build()
+                val response = client.newCall(request).execute()
+                if (response.isSuccessful) {
+                    val body = response.body?.string() ?: ""
+                    val json = org.json.JSONObject(body)
+                    val login = json.optString("login", username.ifBlank { "user" })
+                    withContext(Dispatchers.Main) { onResult(true, "Conectado como @$login") }
+                } else {
+                    withContext(Dispatchers.Main) { onResult(false, "HTTP ${response.code} (Token inválido)") }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { onResult(false, e.localizedMessage ?: "Fallo de conexión") }
+            }
+        }
+    }
+
+    // --- MCP GITLAB MULTI-ACCOUNT MANAGEMENT ---
+    private fun parseGitlabAccounts(json: String): List<GitlabAccount> {
+        val list = mutableListOf<GitlabAccount>()
+        try {
+            val array = org.json.JSONArray(json)
+            for (i in 0 until array.length()) {
+                val obj = array.getJSONObject(i)
+                list.add(
+                    GitlabAccount(
+                        id = obj.optString("id", UUID.randomUUID().toString()),
+                        instanceUrl = obj.optString("instanceUrl", "https://gitlab.com"),
+                        username = obj.optString("username"),
+                        token = obj.optString("token"),
+                        label = obj.optString("label", "GitLab"),
+                        isEnabled = obj.optBoolean("isEnabled", true)
+                    )
+                )
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error parsing gitlab accounts", e)
+        }
+        return list
+    }
+
+    private fun saveGitlabAccountsToDb(list: List<GitlabAccount>) {
+        try {
+            val array = org.json.JSONArray()
+            for (acc in list) {
+                val obj = org.json.JSONObject()
+                obj.put("id", acc.id)
+                obj.put("instanceUrl", acc.instanceUrl)
+                obj.put("username", acc.username)
+                obj.put("token", acc.token)
+                obj.put("label", acc.label)
+                obj.put("isEnabled", acc.isEnabled)
+                array.put(obj)
+            }
+            viewModelScope.launch {
+                repository.saveSetting("gitlab_accounts_json", array.toString())
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error saving gitlab accounts", e)
+        }
+    }
+
+    fun addGitlabAccount(instanceUrl: String, username: String, token: String, label: String = "GitLab Personal") {
+        if (username.isBlank() && token.isBlank()) return
+        val cleanUrl = if (instanceUrl.isBlank()) "https://gitlab.com" else instanceUrl.trim()
+        val newAcc = GitlabAccount(
+            id = UUID.randomUUID().toString(),
+            instanceUrl = cleanUrl,
+            username = username.trim(),
+            token = token.trim(),
+            label = label.ifBlank { "GitLab Personal" },
+            isEnabled = true
+        )
+        val updated = gitlabAccounts.value + newAcc
+        gitlabAccounts.value = updated
+        saveGitlabAccountsToDb(updated)
+        viewModelScope.launch {
+            repository.saveSetting("gitlab_url", cleanUrl)
+            repository.saveSetting("gitlab_pat", token.trim())
+        }
+    }
+
+    fun removeGitlabAccount(id: String) {
+        val updated = gitlabAccounts.value.filter { it.id != id }
+        gitlabAccounts.value = updated
+        saveGitlabAccountsToDb(updated)
+    }
+
+    fun toggleGitlabAccount(id: String) {
+        val updated = gitlabAccounts.value.map {
+            if (it.id == id) it.copy(isEnabled = !it.isEnabled) else it
+        }
+        gitlabAccounts.value = updated
+        saveGitlabAccountsToDb(updated)
+    }
+
+    fun setAllGitlabAccountsEnabled(enabled: Boolean) {
+        val updated = gitlabAccounts.value.map { it.copy(isEnabled = enabled) }
+        gitlabAccounts.value = updated
+        saveGitlabAccountsToDb(updated)
+    }
+
+    fun testGitlabConnection(instanceUrl: String, token: String, username: String, onResult: (Boolean, String) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            if (token.isBlank()) {
+                withContext(Dispatchers.Main) { onResult(false, "Token PAT vacío") }
+                return@launch
+            }
+            val base = if (instanceUrl.isBlank()) "https://gitlab.com" else instanceUrl.trim().removeSuffix("/")
+            try {
+                val client = okhttp3.OkHttpClient.Builder()
+                    .connectTimeout(5, TimeUnit.SECONDS)
+                    .readTimeout(5, TimeUnit.SECONDS)
+                    .build()
+                val request = okhttp3.Request.Builder()
+                    .url("$base/api/v4/user")
+                    .header("PRIVATE-TOKEN", token.trim())
+                    .header("User-Agent", "Riso-Android")
+                    .build()
+                val response = client.newCall(request).execute()
+                if (response.isSuccessful) {
+                    val body = response.body?.string() ?: ""
+                    val json = org.json.JSONObject(body)
+                    val login = json.optString("username", username.ifBlank { "user" })
+                    withContext(Dispatchers.Main) { onResult(true, "Conectado como @$login") }
+                } else {
+                    withContext(Dispatchers.Main) { onResult(false, "HTTP ${response.code} (Token inválido)") }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { onResult(false, e.localizedMessage ?: "Fallo de conexión") }
             }
         }
     }
@@ -421,7 +696,17 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun selectSession(sessionId: String) {
+        val prevSessionId = _selectedSessionId.value
         _selectedSessionId.value = sessionId
+        if (prevSessionId != null && prevSessionId != sessionId) {
+            viewModelScope.launch {
+                // If previous session had no messages, delete it so it doesn't leave an empty conversation
+                val count = repository.getMessageCountForSession(prevSessionId)
+                if (count == 0) {
+                    repository.deleteSession(prevSessionId)
+                }
+            }
+        }
     }
 
     fun togglePlanningMode() {
@@ -434,7 +719,22 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
 
     fun createNewSession() {
         viewModelScope.launch {
-            val provider = repository.getSetting("llm_provider") ?: "Gemini"
+            val currentId = _selectedSessionId.value
+            if (currentId != null) {
+                val currentMsgCount = repository.getMessageCountForSession(currentId)
+                if (currentMsgCount == 0) {
+                    // Already in a blank new session. Do NOT create duplicate empty sessions.
+                    repository.deleteEmptySessionsExcept(currentId)
+                    return@launch
+                }
+            }
+
+            // Purge any abandoned empty sessions before creating a new one
+            repository.deleteEmptySessions()
+
+            val activeId = activeLlmProfileId.value ?: ""
+            val activeProf = llmProfiles.value.find { it.id == activeId }
+            val provider = activeProf?.name ?: "Sin modelo"
             val session = repository.createSession("Chat Automatizado Riso", provider)
             _selectedSessionId.value = session.id
         }
@@ -448,7 +748,11 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                 if (nextSession != null) {
                     _selectedSessionId.value = nextSession.id
                 } else {
-                    createNewSession()
+                    val activeId = activeLlmProfileId.value ?: ""
+                    val activeProf = llmProfiles.value.find { it.id == activeId }
+                    val provider = activeProf?.name ?: "Sin modelo"
+                    val session = repository.createSession("Chat Automatizado Riso", provider)
+                    _selectedSessionId.value = session.id
                 }
             }
         }
@@ -513,6 +817,14 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                 "📷 [Imagen: $attachedImg.png] $userText"
             } else {
                 userText
+            }
+
+            // If first message in this session, update title to user prompt
+            val existingMsgCount = repository.getMessageCountForSession(sessionId)
+            if (existingMsgCount == 0 && userText.isNotBlank()) {
+                val clean = userText.trim().replace("\n", " ")
+                val title = if (clean.length > 28) clean.take(28) + "..." else clean
+                repository.updateSessionTitle(sessionId, title)
             }
 
             // Append user text
@@ -1420,6 +1732,8 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
             repository.clearAllUserData()
             emailAccounts.value = emptyList()
             activeEmailAccountId.value = null
+            githubAccounts.value = emptyList()
+            gitlabAccounts.value = emptyList()
             llmProfiles.value = emptyList()
             activeLlmProfileId.value = null
             sttProfiles.value = emptyList()

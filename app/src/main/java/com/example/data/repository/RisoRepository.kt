@@ -19,9 +19,25 @@ class RisoRepository(private val risoDao: RisoDao) {
         return session
     }
 
+    suspend fun updateSessionTitle(sessionId: String, title: String) {
+        risoDao.updateSessionTitle(sessionId, title)
+    }
+
     suspend fun deleteSession(sessionId: String) {
         risoDao.deleteMessagesBySessionId(sessionId)
         risoDao.deleteSessionById(sessionId)
+    }
+
+    suspend fun getMessageCountForSession(sessionId: String): Int {
+        return risoDao.getMessageCountForSession(sessionId)
+    }
+
+    suspend fun deleteEmptySessions() {
+        risoDao.deleteEmptySessions()
+    }
+
+    suspend fun deleteEmptySessionsExcept(exceptSessionId: String) {
+        risoDao.deleteEmptySessionsExcept(exceptSessionId)
     }
 
     // Chat Messages

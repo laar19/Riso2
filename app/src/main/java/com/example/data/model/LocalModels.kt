@@ -38,3 +38,20 @@ data class AppSetting(
     @PrimaryKey val key: String,
     val value: String
 )
+
+data class GithubAccount(
+    val id: String = UUID.randomUUID().toString(),
+    val username: String,
+    val token: String,
+    val label: String = "GitHub Personal",
+    val isEnabled: Boolean = true
+)
+
+data class GitlabAccount(
+    val id: String = UUID.randomUUID().toString(),
+    val instanceUrl: String = "https://gitlab.com",
+    val username: String,
+    val token: String,
+    val label: String = "GitLab Personal",
+    val isEnabled: Boolean = true
+)
