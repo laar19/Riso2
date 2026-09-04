@@ -417,33 +417,6 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
             .fillMaxSize()
             .imePadding()
     ) {
-        // Ultra streamlined model picker selector inspired by Gemini Android App
-        Row(
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 8.dp, bottom = 4.dp)
-        ) {
-            Row(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                    .clickable { showModelSelector = true }
-                    .padding(horizontal = 14.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                val activeLLM = currentProvider
-                val activeWhisper = if (sttProvider == "Whisper Local small-v3") "Local" else "API"
-                Text(
-                    text = "✨ $activeLLM + Whisper ($activeWhisper) ▾",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = MaterialTheme.colorScheme.primary
-                )
-            }
-        }
-
         // Warning bar for downloading local Whisper models Offline
         if (sttProvider == "Whisper Local small-v3" && whisperStatus != "Ready") {
             Spacer(modifier = Modifier.height(4.dp))
@@ -475,11 +448,14 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
             }
         }
 
-        // Model selector custom Dialog matching the Gemini Advanced picker
+        // Model selector Dialog displaying configured LLM profiles
         if (showModelSelector) {
+            val llmProfiles by viewModel.llmProfiles.collectAsStateWithLifecycle()
+            val activeLlmProfileId by viewModel.activeLlmProfileId.collectAsStateWithLifecycle()
+
             Dialog(onDismissRequest = { showModelSelector = false }) {
                 Card(
-                    shape = RoundedCornerShape(24.dp),
+                    shape = RoundedCornerShape(20.dp),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                     elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
                     modifier = Modifier
@@ -487,7 +463,7 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
                         .padding(16.dp)
                 ) {
                     Column(
-                        modifier = Modifier.padding(20.dp)
+                        modifier = Modifier.padding(18.dp)
                     ) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -496,13 +472,13 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
                         ) {
                             Column {
                                 Text(
-                                    text = t("model_selector_title"),
-                                    fontWeight = FontWeight.ExtraBold,
-                                    fontSize = 18.sp,
+                                    text = "Modelos LLM",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 16.sp,
                                     color = MaterialTheme.colorScheme.primary
                                 )
                                 Text(
-                                    text = t("model_selector_sub"),
+                                    text = "Selecciona el modelo activo para el chat",
                                     fontSize = 11.sp,
                                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                                 )
@@ -515,117 +491,96 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(16.dp))
-                        HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
                         Spacer(modifier = Modifier.height(12.dp))
+                        HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                        Spacer(modifier = Modifier.height(8.dp))
 
-                        // Section 1: LLM Engine
-                        Text(
-                            text = t("llm_header"),
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.secondary,
-                            modifier = Modifier.padding(bottom = 8.dp)
-                        )
-
-                        val availableModels = mutableListOf<Triple<String, String, String>>()
-                        
-                        // Gemini is always available if global compiled key, or any configured
-                        val geminiKey = settings["gemini_api_key"]
-                        val hasGemini = !geminiKey.isNullOrBlank() || BuildConfig.GEMINI_API_KEY.isNotBlank()
-                        if (hasGemini) {
-                            availableModels.add(Triple("Gemini", "🤖 Gemini", t("llm_gemini_desc")))
-                        }
-                        
-                        val openaiKey = settings["openai_api_key"]
-                        if (!openaiKey.isNullOrBlank()) {
-                            availableModels.add(Triple("OpenAI", "⚡ OpenAI", t("llm_openai_desc")))
-                        }
-                        
-                        val claudeKey = settings["claude_api_key"]
-                        if (!claudeKey.isNullOrBlank()) {
-                            availableModels.add(Triple("Claude", "🔮 Claude", t("llm_claude_desc")))
-                        }
-                        
-                        if (availableModels.isEmpty()) {
-                            availableModels.add(Triple("Gemini", "🤖 Gemini", t("llm_gemini_desc")))
-                        }
-
-                        availableModels.forEach { (id, title, desc) ->
-                            val isSel = currentProvider == id
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 4.dp)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(if (isSel) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else Color.Transparent)
-                                    .clickable { viewModel.updateSetting("llm_provider", id) }
-                                    .padding(horizontal = 10.dp, vertical = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(title, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                                    Text(desc, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
+                        if (llmProfiles.isEmpty()) {
+                            Text(
+                                text = "No hay modelos configurados. Agrega uno en Ajustes.",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                                modifier = Modifier.padding(vertical = 12.dp)
+                            )
+                        } else {
+                            llmProfiles.forEach { profile ->
+                                val isSel = profile.id == activeLlmProfileId
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 4.dp)
+                                        .clickable {
+                                            viewModel.selectActiveLlmProfile(profile.id)
+                                            showModelSelector = false
+                                        },
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = if (isSel) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
+                                                         else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)
+                                    ),
+                                    border = if (isSel) BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else null,
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(10.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = profile.name,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 13.sp,
+                                                color = if (isSel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                            )
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                modifier = Modifier.padding(top = 2.dp)
+                                            ) {
+                                                Text(
+                                                    text = profile.provider,
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                                                    modifier = Modifier
+                                                        .background(
+                                                            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
+                                                            RoundedCornerShape(4.dp)
+                                                        )
+                                                        .padding(horizontal = 4.dp, vertical = 1.dp)
+                                                )
+                                                if (profile.modelName.isNotBlank()) {
+                                                    Spacer(modifier = Modifier.width(6.dp))
+                                                    Text(
+                                                        text = profile.modelName,
+                                                        fontSize = 10.sp,
+                                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                        RadioButton(
+                                            selected = isSel,
+                                            onClick = {
+                                                viewModel.selectActiveLlmProfile(profile.id)
+                                                showModelSelector = false
+                                            },
+                                            colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colorScheme.primary),
+                                            modifier = Modifier.scale(0.85f)
+                                        )
+                                    }
                                 }
-                                RadioButton(
-                                    selected = isSel,
-                                    onClick = { viewModel.updateSetting("llm_provider", id) },
-                                    colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colorScheme.primary),
-                                    modifier = Modifier.scale(0.85f)
-                                )
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(16.dp))
-                        HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        // Section 2: Speech to Text (STT) Engine
-                        Text(
-                            text = t("voice_header"),
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.secondary,
-                            modifier = Modifier.padding(bottom = 8.dp)
-                        )
-
-                        listOf(
-                            Triple("Whisper API", "🎙️ Whisper API", t("stt_whisper_api_desc")),
-                            Triple("Whisper Local small-v3", "📦 Whisper Local", t("stt_whisper_local_desc"))
-                        ).forEach { (id, title, desc) ->
-                            val isSel = sttProvider == id
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 4.dp)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(if (isSel) MaterialTheme.colorScheme.secondary.copy(alpha = 0.08f) else Color.Transparent)
-                                    .clickable { viewModel.setSttProvider(id) }
-                                    .padding(horizontal = 10.dp, vertical = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(title, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                                    Text(desc, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
-                                }
-                                RadioButton(
-                                    selected = isSel,
-                                    onClick = { viewModel.setSttProvider(id) },
-                                    colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colorScheme.secondary),
-                                    modifier = Modifier.scale(0.85f)
-                                )
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(20.dp))
+                        Spacer(modifier = Modifier.height(14.dp))
                         Button(
                             onClick = { showModelSelector = false },
                             modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp)
+                            shape = RoundedCornerShape(10.dp)
                         ) {
-                            Text("OK", fontWeight = FontWeight.ExtraBold)
+                            Text("Cerrar", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                         }
                     }
                 }
@@ -723,38 +678,66 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
             }
         }
 
-        // Subtle Planning Mode switch right over the chat input box
+        // Row right above the chat input box: LLM Model selector on the left, Planning mode switch on the right
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 2.dp),
+                .padding(horizontal = 12.dp, vertical = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.End
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Text(
-                text = if (planningMode) t("planning_mode_active") else t("planning_mode_inactive"),
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-                color = if (planningMode) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                modifier = Modifier.padding(end = 6.dp)
-            )
-            Box(
-                modifier = Modifier.size(54.dp, 34.dp),
-                contentAlignment = Alignment.Center
+            val llmProfiles by viewModel.llmProfiles.collectAsStateWithLifecycle()
+            val activeLlmId by viewModel.activeLlmProfileId.collectAsStateWithLifecycle()
+            val activeProf = llmProfiles.find { it.id == activeLlmId } ?: llmProfiles.firstOrNull()
+            val activeDisplayName = activeProf?.name ?: currentProvider
+
+            // Select active LLM directly from chat box
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.08f))
+                    .clickable { showModelSelector = true }
+                    .padding(horizontal = 10.dp, vertical = 4.dp)
+                    .testTag("chat_box_llm_selector")
             ) {
-                Switch(
-                    checked = planningMode,
-                    onCheckedChange = { viewModel.togglePlanningMode() },
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = MaterialTheme.colorScheme.tertiary,
-                        checkedTrackColor = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.3f),
-                        uncheckedThumbColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
-                        uncheckedTrackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f),
-                    ),
-                    modifier = Modifier
-                        .scale(0.7f)
-                        .testTag("toggle_planning_mode_chat")
+                Text(
+                    text = "🤖 $activeDisplayName ▾",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
                 )
+            }
+
+            // Planning Mode switch
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = if (planningMode) t("planning_mode_active") else t("planning_mode_inactive"),
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = if (planningMode) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                    modifier = Modifier.padding(end = 4.dp)
+                )
+                Box(
+                    modifier = Modifier.size(46.dp, 28.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Switch(
+                        checked = planningMode,
+                        onCheckedChange = { viewModel.togglePlanningMode() },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = MaterialTheme.colorScheme.tertiary,
+                            checkedTrackColor = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.3f),
+                            uncheckedThumbColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                            uncheckedTrackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f),
+                        ),
+                        modifier = Modifier
+                            .scale(0.65f)
+                            .testTag("toggle_planning_mode_chat")
+                    )
+                }
             }
         }
 
@@ -2174,10 +2157,31 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
     fun t(key: String): String = L10n.t(key, isEn)
 
     var geminiKey by remember { mutableStateOf("") }
-    var openaiKey by remember { mutableStateOf("") }
-    var claudeKey by remember { mutableStateOf("") }
-    var whisperKey by remember { mutableStateOf("") }
     var braveKey by remember { mutableStateOf("") }
+
+    // LLM Profiles & Testing states
+    var llmTestStatuses by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var testingLlmId by remember { mutableStateOf<String?>(null) }
+    var showAddLlmForm by remember { mutableStateOf(false) }
+    var newLlmName by remember { mutableStateOf("") }
+    var newLlmProvider by remember { mutableStateOf("Google") }
+    var newLlmEndpoint by remember { mutableStateOf("https://generativelanguage.googleapis.com") }
+    var newLlmModel by remember { mutableStateOf("gemini-1.5-flash") }
+    var newLlmKey by remember { mutableStateOf("") }
+    var newLlmTestMsg by remember { mutableStateOf<String?>(null) }
+    var isTestingNewLlm by remember { mutableStateOf(false) }
+
+    // STT Profiles & Testing states
+    var sttTestStatuses by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var testingSttId by remember { mutableStateOf<String?>(null) }
+    var showAddSttForm by remember { mutableStateOf(false) }
+    var newSttName by remember { mutableStateOf("") }
+    var newSttIsLocal by remember { mutableStateOf(false) }
+    var newSttEndpoint by remember { mutableStateOf("https://api.openai.com/v1/audio/transcriptions") }
+    var newSttModel by remember { mutableStateOf("whisper-1") }
+    var newSttKey by remember { mutableStateOf("") }
+    var newSttTestMsg by remember { mutableStateOf<String?>(null) }
+    var isTestingNewStt by remember { mutableStateOf(false) }
 
     // New email account addition fields temp state
     var newEmailAddress by remember { mutableStateOf("") }
@@ -2192,10 +2196,6 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
     // Init inputs from database values
     LaunchedEffect(settings) {
         if (settings.isNotEmpty()) {
-            geminiKey = settings["gemini_api_key"] ?: ""
-            openaiKey = settings["openai_api_key"] ?: ""
-            claudeKey = settings["claude_api_key"] ?: ""
-            whisperKey = settings["whisper_api_key"] ?: ""
             braveKey = settings["brave_search_api_key"] ?: ""
         }
     }
@@ -2291,7 +2291,717 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
             }
         }
 
-        // Section 1: LLM APIs Config Card
+        // APARTADO 1: Configuración de APIs LLM (Modelos de Lenguaje)
+        item {
+            val llmProfiles by viewModel.llmProfiles.collectAsStateWithLifecycle()
+            val activeLlmProfileId by viewModel.activeLlmProfileId.collectAsStateWithLifecycle()
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "Modelos LLM (APIs)",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.height(3.dp))
+                    Text(
+                        text = "Configura proveedores (Google, Anthropic, OpenAI o compatible), endpoint y modelo. Elige cuál usar por defecto.",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // List of existing LLM profiles
+                    if (llmProfiles.isEmpty()) {
+                        Text(
+                            text = "No hay modelos configurados.",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                            modifier = Modifier.padding(vertical = 6.dp)
+                        )
+                    } else {
+                        llmProfiles.forEach { profile ->
+                            val isActive = profile.id == activeLlmProfileId
+                            val testMsg = llmTestStatuses[profile.id]
+                            val isTestingThis = testingLlmId == profile.id
+
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = if (isActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.06f)
+                                                     else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)
+                                ),
+                                border = if (isActive) BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else null,
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(10.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            RadioButton(
+                                                selected = isActive,
+                                                onClick = { viewModel.selectActiveLlmProfile(profile.id) },
+                                                colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colorScheme.primary),
+                                                modifier = Modifier.scale(0.85f)
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Column {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Text(
+                                                        text = profile.name,
+                                                        fontWeight = FontWeight.Bold,
+                                                        fontSize = 13.sp,
+                                                        color = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                                    )
+                                                    if (isActive) {
+                                                        Spacer(modifier = Modifier.width(6.dp))
+                                                        Text(
+                                                            text = "Activo",
+                                                            fontSize = 9.sp,
+                                                            fontWeight = FontWeight.ExtraBold,
+                                                            color = MaterialTheme.colorScheme.primary,
+                                                            modifier = Modifier
+                                                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f), RoundedCornerShape(4.dp))
+                                                                .padding(horizontal = 5.dp, vertical = 1.dp)
+                                                        )
+                                                    }
+                                                }
+                                                Text(
+                                                    text = "${profile.provider} • ${profile.modelName.ifBlank { "default" }}",
+                                                    fontSize = 10.sp,
+                                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                                                )
+                                                if (profile.apiEndpoint.isNotBlank()) {
+                                                    Text(
+                                                        text = profile.apiEndpoint,
+                                                        fontSize = 9.sp,
+                                                        maxLines = 1,
+                                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                                                    )
+                                                }
+                                            }
+                                        }
+
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Button(
+                                                onClick = {
+                                                    testingLlmId = profile.id
+                                                    viewModel.testLlmConnection(profile.provider, profile.apiEndpoint, profile.apiKey, profile.modelName) { ok, msg ->
+                                                        llmTestStatuses = llmTestStatuses + (profile.id to if (ok) "✓ Conexión OK" else "✕ $msg")
+                                                        testingLlmId = null
+                                                    }
+                                                },
+                                                modifier = Modifier
+                                                    .height(28.dp)
+                                                    .testTag("test_llm_btn_${profile.id}"),
+                                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                                                shape = RoundedCornerShape(6.dp),
+                                                colors = ButtonDefaults.buttonColors(
+                                                    containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                                                    contentColor = MaterialTheme.colorScheme.primary
+                                                )
+                                            ) {
+                                                if (isTestingThis) {
+                                                    CircularProgressIndicator(modifier = Modifier.size(10.dp), strokeWidth = 1.5.dp, color = MaterialTheme.colorScheme.primary)
+                                                } else {
+                                                    Text("Probar", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                                }
+                                            }
+
+                                            IconButton(
+                                                onClick = { viewModel.removeLlmProfile(profile.id) },
+                                                modifier = Modifier.size(32.dp)
+                                            ) {
+                                                Icon(
+                                                    Icons.Default.Delete,
+                                                    contentDescription = "Borrar",
+                                                    tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f),
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    if (testMsg != null) {
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = testMsg,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = if (testMsg.startsWith("✓")) Color(0xFF10B981) else MaterialTheme.colorScheme.error,
+                                            modifier = Modifier.padding(start = 32.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    if (!showAddLlmForm) {
+                        OutlinedButton(
+                            onClick = { showAddLlmForm = true },
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(36.dp)
+                                .testTag("show_add_llm_form_btn")
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = "Add", modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("+ Agregar Modelo", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    } else {
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier
+                                .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.03f), RoundedCornerShape(10.dp))
+                                .padding(10.dp)
+                        ) {
+                            Text("Nuevo Modelo LLM", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+
+                            OutlinedTextField(
+                                value = newLlmName,
+                                onValueChange = { newLlmName = it },
+                                label = { Text("Nombre (ej: Gemini 1.5 Flash)", fontSize = 11.sp) },
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.fillMaxWidth().testTag("new_llm_name_input"),
+                                singleLine = true
+                            )
+
+                            // Endpoint Provider Selector
+                            Text("Tipo de Endpoint:", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                listOf(
+                                    "Google" to ("https://generativelanguage.googleapis.com" to "gemini-1.5-flash"),
+                                    "Anthropic" to ("https://api.anthropic.com/v1" to "claude-3-5-sonnet-20240620"),
+                                    "OpenAI" to ("https://api.openai.com/v1" to "gpt-4o-mini"),
+                                    "Compatible" to ("https://api.openai.com/v1" to "")
+                                ).forEach { (prov, defaults) ->
+                                    val isSel = newLlmProvider == prov
+                                    Card(
+                                        colors = CardDefaults.cardColors(
+                                            containerColor = if (isSel) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                                                             else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                                        ),
+                                        border = if (isSel) BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else null,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clickable {
+                                                newLlmProvider = prov
+                                                newLlmEndpoint = defaults.first
+                                                if (defaults.second.isNotBlank()) newLlmModel = defaults.second
+                                            },
+                                        shape = RoundedCornerShape(6.dp)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier.padding(vertical = 6.dp).fillMaxWidth(),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(prov, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                }
+                            }
+
+                            OutlinedTextField(
+                                value = newLlmEndpoint,
+                                onValueChange = { newLlmEndpoint = it },
+                                label = { Text("API Endpoint", fontSize = 11.sp) },
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.fillMaxWidth().testTag("new_llm_endpoint_input"),
+                                singleLine = true
+                            )
+
+                            OutlinedTextField(
+                                value = newLlmModel,
+                                onValueChange = { newLlmModel = it },
+                                label = { Text("Nombre del Modelo (ej: gemini-1.5-flash, gpt-4o)", fontSize = 11.sp) },
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.fillMaxWidth().testTag("new_llm_model_input"),
+                                singleLine = true
+                            )
+
+                            OutlinedTextField(
+                                value = newLlmKey,
+                                onValueChange = { newLlmKey = it },
+                                label = { Text("API Key", fontSize = 11.sp) },
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.fillMaxWidth().testTag("new_llm_key_input"),
+                                singleLine = true,
+                                visualTransformation = PasswordVisualTransformation()
+                            )
+
+                            if (newLlmTestMsg != null) {
+                                Text(
+                                    text = newLlmTestMsg!!,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (newLlmTestMsg!!.startsWith("✓")) Color(0xFF10B981) else MaterialTheme.colorScheme.error
+                                )
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Button(
+                                    onClick = {
+                                        if (newLlmKey.isNotBlank()) {
+                                            isTestingNewLlm = true
+                                            viewModel.testLlmConnection(newLlmProvider, newLlmEndpoint, newLlmKey, newLlmModel) { ok, msg ->
+                                                newLlmTestMsg = if (ok) "✓ Conexión OK" else "✕ $msg"
+                                                isTestingNewLlm = false
+                                            }
+                                        } else {
+                                            newLlmTestMsg = "✕ Ingresa la API Key primero"
+                                        }
+                                    },
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(34.dp)
+                                        .testTag("test_new_llm_btn"),
+                                    shape = RoundedCornerShape(6.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.2f),
+                                        contentColor = MaterialTheme.colorScheme.secondary
+                                    )
+                                ) {
+                                    if (isTestingNewLlm) {
+                                        CircularProgressIndicator(modifier = Modifier.size(10.dp), strokeWidth = 1.5.dp, color = MaterialTheme.colorScheme.secondary)
+                                    } else {
+                                        Text("Probar", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+
+                                OutlinedButton(
+                                    onClick = {
+                                        showAddLlmForm = false
+                                        newLlmTestMsg = null
+                                    },
+                                    shape = RoundedCornerShape(6.dp),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(34.dp)
+                                ) {
+                                    Text("Cancelar", fontSize = 11.sp)
+                                }
+
+                                Button(
+                                    onClick = {
+                                        if (newLlmName.isNotBlank() && newLlmKey.isNotBlank()) {
+                                            viewModel.addLlmProfile(
+                                                name = newLlmName,
+                                                provider = newLlmProvider,
+                                                apiKey = newLlmKey,
+                                                apiEndpoint = newLlmEndpoint,
+                                                modelName = newLlmModel
+                                            )
+                                            newLlmName = ""
+                                            newLlmKey = ""
+                                            newLlmTestMsg = null
+                                            showAddLlmForm = false
+                                        }
+                                    },
+                                    shape = RoundedCornerShape(6.dp),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(34.dp)
+                                        .testTag("save_new_llm_btn")
+                                ) {
+                                    Text("Guardar", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // APARTADO 2: Configuración de Speech to Text (STT - Remoto y Local)
+        item {
+            val sttProfiles by viewModel.sttProfiles.collectAsStateWithLifecycle()
+            val activeSttProfileId by viewModel.activeSttProfileId.collectAsStateWithLifecycle()
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "Reconocimiento de Voz (STT)",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.height(3.dp))
+                    Text(
+                        text = "Configura Whisper API Remoto o Whisper Local sin conexión. Elige cuál usar por defecto.",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // List of existing STT profiles
+                    if (sttProfiles.isEmpty()) {
+                        Text(
+                            text = "No hay perfiles STT configurados.",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                            modifier = Modifier.padding(vertical = 6.dp)
+                        )
+                    } else {
+                        sttProfiles.forEach { profile ->
+                            val isActive = profile.id == activeSttProfileId
+                            val testMsg = sttTestStatuses[profile.id]
+                            val isTestingThis = testingSttId == profile.id
+
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = if (isActive) MaterialTheme.colorScheme.secondary.copy(alpha = 0.06f)
+                                                     else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)
+                                ),
+                                border = if (isActive) BorderStroke(1.dp, MaterialTheme.colorScheme.secondary) else null,
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(10.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            RadioButton(
+                                                selected = isActive,
+                                                onClick = { viewModel.selectActiveSttProfile(profile.id) },
+                                                colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colorScheme.secondary),
+                                                modifier = Modifier.scale(0.85f)
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Column {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Text(
+                                                        text = profile.name,
+                                                        fontWeight = FontWeight.Bold,
+                                                        fontSize = 13.sp,
+                                                        color = if (isActive) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurface
+                                                    )
+                                                    if (isActive) {
+                                                        Spacer(modifier = Modifier.width(6.dp))
+                                                        Text(
+                                                            text = "Activo",
+                                                            fontSize = 9.sp,
+                                                            fontWeight = FontWeight.ExtraBold,
+                                                            color = MaterialTheme.colorScheme.secondary,
+                                                            modifier = Modifier
+                                                                .background(MaterialTheme.colorScheme.secondary.copy(alpha = 0.12f), RoundedCornerShape(4.dp))
+                                                                .padding(horizontal = 5.dp, vertical = 1.dp)
+                                                        )
+                                                    }
+                                                }
+                                                Text(
+                                                    text = if (profile.isLocal) "Local (Offline) • ${profile.modelName}" else "Remoto (API) • ${profile.modelName}",
+                                                    fontSize = 10.sp,
+                                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                                                )
+                                                if (!profile.isLocal && profile.apiEndpoint.isNotBlank()) {
+                                                    Text(
+                                                        text = profile.apiEndpoint,
+                                                        fontSize = 9.sp,
+                                                        maxLines = 1,
+                                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                                                    )
+                                                }
+                                            }
+                                        }
+
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            if (profile.isLocal && whisperStatus != "Ready") {
+                                                Button(
+                                                    onClick = { viewModel.downloadLocalWhisper() },
+                                                    enabled = whisperStatus != "Downloading",
+                                                    modifier = Modifier
+                                                        .height(28.dp)
+                                                        .padding(end = 4.dp),
+                                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                                                    shape = RoundedCornerShape(6.dp),
+                                                    colors = ButtonDefaults.buttonColors(
+                                                        containerColor = MaterialTheme.colorScheme.tertiary
+                                                    )
+                                                ) {
+                                                    Text(
+                                                        text = if (whisperStatus == "Downloading") "${whisperProgress}%" else "Descargar",
+                                                        fontSize = 10.sp,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                }
+                                            }
+
+                                            Button(
+                                                onClick = {
+                                                    testingSttId = profile.id
+                                                    viewModel.testSttConnection(profile.isLocal, profile.apiEndpoint, profile.apiKey, profile.modelName) { ok, msg ->
+                                                        sttTestStatuses = sttTestStatuses + (profile.id to if (ok) "✓ Conexión OK" else "✕ $msg")
+                                                        testingSttId = null
+                                                    }
+                                                },
+                                                modifier = Modifier
+                                                    .height(28.dp)
+                                                    .testTag("test_stt_btn_${profile.id}"),
+                                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                                                shape = RoundedCornerShape(6.dp),
+                                                colors = ButtonDefaults.buttonColors(
+                                                    containerColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.15f),
+                                                    contentColor = MaterialTheme.colorScheme.secondary
+                                                )
+                                            ) {
+                                                if (isTestingThis) {
+                                                    CircularProgressIndicator(modifier = Modifier.size(10.dp), strokeWidth = 1.5.dp, color = MaterialTheme.colorScheme.secondary)
+                                                } else {
+                                                    Text("Probar", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                                }
+                                            }
+
+                                            IconButton(
+                                                onClick = { viewModel.removeSttProfile(profile.id) },
+                                                modifier = Modifier.size(32.dp)
+                                            ) {
+                                                Icon(
+                                                    Icons.Default.Delete,
+                                                    contentDescription = "Borrar",
+                                                    tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f),
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    if (testMsg != null) {
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = testMsg,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = if (testMsg.startsWith("✓")) Color(0xFF10B981) else MaterialTheme.colorScheme.error,
+                                            modifier = Modifier.padding(start = 32.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    if (!showAddSttForm) {
+                        OutlinedButton(
+                            onClick = { showAddSttForm = true },
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(36.dp)
+                                .testTag("show_add_stt_form_btn")
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = "Add", modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("+ Agregar STT", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    } else {
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier
+                                .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.03f), RoundedCornerShape(10.dp))
+                                .padding(10.dp)
+                        ) {
+                            Text("Nuevo Perfil STT", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
+
+                            OutlinedTextField(
+                                value = newSttName,
+                                onValueChange = { newSttName = it },
+                                label = { Text("Nombre (ej: Whisper Remoto)", fontSize = 11.sp) },
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.fillMaxWidth().testTag("new_stt_name_input"),
+                                singleLine = true
+                            )
+
+                            // Type selector: Remoto vs Local
+                            Text("Tipo de STT:", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                listOf(
+                                    "Remoto (API)" to false,
+                                    "Local (Offline)" to true
+                                ).forEach { (label, isLoc) ->
+                                    val isSel = newSttIsLocal == isLoc
+                                    Card(
+                                        colors = CardDefaults.cardColors(
+                                            containerColor = if (isSel) MaterialTheme.colorScheme.secondary.copy(alpha = 0.12f)
+                                                             else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                                        ),
+                                        border = if (isSel) BorderStroke(1.dp, MaterialTheme.colorScheme.secondary) else null,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clickable { newSttIsLocal = isLoc },
+                                        shape = RoundedCornerShape(6.dp)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier.padding(vertical = 6.dp).fillMaxWidth(),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(label, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (!newSttIsLocal) {
+                                OutlinedTextField(
+                                    value = newSttEndpoint,
+                                    onValueChange = { newSttEndpoint = it },
+                                    label = { Text("API Endpoint", fontSize = 11.sp) },
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.fillMaxWidth().testTag("new_stt_endpoint_input"),
+                                    singleLine = true
+                                )
+
+                                OutlinedTextField(
+                                    value = newSttModel,
+                                    onValueChange = { newSttModel = it },
+                                    label = { Text("Nombre del Modelo (ej: whisper-1)", fontSize = 11.sp) },
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.fillMaxWidth().testTag("new_stt_model_input"),
+                                    singleLine = true
+                                )
+
+                                OutlinedTextField(
+                                    value = newSttKey,
+                                    onValueChange = { newSttKey = it },
+                                    label = { Text("API Key", fontSize = 11.sp) },
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.fillMaxWidth().testTag("new_stt_key_input"),
+                                    singleLine = true,
+                                    visualTransformation = PasswordVisualTransformation()
+                                )
+                            } else {
+                                OutlinedTextField(
+                                    value = newSttModel,
+                                    onValueChange = { newSttModel = it },
+                                    label = { Text("Nombre del Modelo Local (ej: whisper-small-v3)", fontSize = 11.sp) },
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.fillMaxWidth().testTag("new_stt_model_input"),
+                                    singleLine = true
+                                )
+                            }
+
+                            if (newSttTestMsg != null) {
+                                Text(
+                                    text = newSttTestMsg!!,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (newSttTestMsg!!.startsWith("✓")) Color(0xFF10B981) else MaterialTheme.colorScheme.error
+                                )
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Button(
+                                    onClick = {
+                                        isTestingNewStt = true
+                                        viewModel.testSttConnection(newSttIsLocal, newSttEndpoint, newSttKey, newSttModel) { ok, msg ->
+                                            newSttTestMsg = if (ok) "✓ Conexión OK" else "✕ $msg"
+                                            isTestingNewStt = false
+                                        }
+                                    },
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(34.dp)
+                                        .testTag("test_new_stt_btn"),
+                                    shape = RoundedCornerShape(6.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.2f),
+                                        contentColor = MaterialTheme.colorScheme.secondary
+                                    )
+                                ) {
+                                    if (isTestingNewStt) {
+                                        CircularProgressIndicator(modifier = Modifier.size(10.dp), strokeWidth = 1.5.dp, color = MaterialTheme.colorScheme.secondary)
+                                    } else {
+                                        Text("Probar", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+
+                                OutlinedButton(
+                                    onClick = {
+                                        showAddSttForm = false
+                                        newSttTestMsg = null
+                                    },
+                                    shape = RoundedCornerShape(6.dp),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(34.dp)
+                                ) {
+                                    Text("Cancelar", fontSize = 11.sp)
+                                }
+
+                                Button(
+                                    onClick = {
+                                        if (newSttName.isNotBlank() && (newSttIsLocal || newSttKey.isNotBlank())) {
+                                            viewModel.addSttProfile(
+                                                name = newSttName,
+                                                isLocal = newSttIsLocal,
+                                                apiEndpoint = newSttEndpoint,
+                                                modelName = newSttModel,
+                                                apiKey = newSttKey
+                                            )
+                                            newSttName = ""
+                                            newSttKey = ""
+                                            newSttTestMsg = null
+                                            showAddSttForm = false
+                                        }
+                                    },
+                                    shape = RoundedCornerShape(6.dp),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(34.dp)
+                                        .testTag("save_new_stt_btn")
+                                ) {
+                                    Text("Guardar", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // APARTADO 3: Búsqueda Web (Opcional - Brave Search)
         item {
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -2300,412 +3010,34 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
-                        text = t("apis_config_header"),
+                        text = "Búsqueda Web (Opcional)",
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.primary
                     )
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    // Gemini API Key entry
-                    OutlinedTextField(
-                        value = geminiKey,
-                        onValueChange = {
-                            geminiKey = it
-                            viewModel.updateSetting("gemini_api_key", it)
-                        },
-                        label = { Text("Google Gemini API Key") },
-                        placeholder = { Text(t("enter_api_key")) },
-                        shape = RoundedCornerShape(12.dp),
-                        leadingIcon = { Icon(Icons.Default.Lock, contentDescription = "LockKey") },
-                        trailingIcon = {
-                            IconButton(onClick = { keyMasked = !keyMasked }) {
-                                Icon(
-                                    imageVector = if (keyMasked) Icons.Default.Warning else Icons.Default.Info,
-                                    contentDescription = "MaskKey"
-                                )
-                            }
-                        },
-                        visualTransformation = if (keyMasked) PasswordVisualTransformation() else VisualTransformation.None,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("gemini_key_input"),
-                        singleLine = true
+                    Spacer(modifier = Modifier.height(3.dp))
+                    Text(
+                        text = "API Key de Brave Search para consultar internet en tiempo real.",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                     )
-
                     Spacer(modifier = Modifier.height(10.dp))
 
-                    // OpenAI API Key
-                    OutlinedTextField(
-                        value = openaiKey,
-                        onValueChange = {
-                            openaiKey = it
-                            viewModel.updateSetting("openai_api_key", it)
-                        },
-                        label = { Text(t("openai_api_key_label")) },
-                        placeholder = { Text("sk-...") },
-                        shape = RoundedCornerShape(12.dp),
-                        visualTransformation = PasswordVisualTransformation(),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("openai_key_input"),
-                        singleLine = true
-                    )
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    // Claude key
-                    OutlinedTextField(
-                        value = claudeKey,
-                        onValueChange = {
-                            claudeKey = it
-                            viewModel.updateSetting("claude_api_key", it)
-                        },
-                        label = { Text(t("claude_api_key_label")) },
-                        placeholder = { Text("sk-ant-...") },
-                        shape = RoundedCornerShape(12.dp),
-                        visualTransformation = PasswordVisualTransformation(),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("claude_key_input"),
-                        singleLine = true
-                    )
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    // Whisper API Key
-                    OutlinedTextField(
-                        value = whisperKey,
-                        onValueChange = {
-                            whisperKey = it
-                            viewModel.updateSetting("whisper_api_key", it)
-                        },
-                        label = { Text(t("whisper_api_key_label")) },
-                        placeholder = { Text("sk-...") },
-                        shape = RoundedCornerShape(12.dp),
-                        visualTransformation = PasswordVisualTransformation(),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("whisper_key_input"),
-                        singleLine = true
-                    )
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    // Brave Search API Key
                     OutlinedTextField(
                         value = braveKey,
                         onValueChange = {
                             braveKey = it
                             viewModel.updateSetting("brave_search_api_key", it)
                         },
-                        label = { Text("Brave Search API Key") },
+                        label = { Text("Brave Search API Key", fontSize = 11.sp) },
                         placeholder = { Text("BSA-...") },
-                        shape = RoundedCornerShape(12.dp),
+                        shape = RoundedCornerShape(8.dp),
                         visualTransformation = PasswordVisualTransformation(),
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("brave_search_key_input"),
                         singleLine = true
                     )
-                }
-            }
-        }
-
-        // SECTION: MULTI-MODEL PROFILE MANAGEMENT
-        item {
-            val llmProfiles by viewModel.llmProfiles.collectAsStateWithLifecycle()
-            val activeLlmProfileId by viewModel.activeLlmProfileId.collectAsStateWithLifecycle()
-
-            var newProfileName by remember { mutableStateOf("") }
-            var newProfileProvider by remember { mutableStateOf("Gemini") }
-            var newProfileKey by remember { mutableStateOf("") }
-            var showAddNewForm by remember { mutableStateOf(false) }
-
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = "Múltiples Modelos y API Keys (OpenAI, Anthropic, Gemini, etc.)",
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "Agrega y administra múltiples claves API para cada proveedor, y elige cuál quieres usar en cada sesión.",
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    // List existing profiles
-                    if (llmProfiles.isEmpty()) {
-                        Text(
-                            text = "No hay perfiles de modelos adicionales. Usa el formulario de abajo para agregar uno.",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
-                            modifier = Modifier.padding(vertical = 8.dp)
-                        )
-                    } else {
-                        llmProfiles.forEach { profile ->
-                            val isActive = profile.id == activeLlmProfileId
-                            Card(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 4.dp)
-                                    .clickable { viewModel.selectActiveLlmProfile(profile.id) },
-                                colors = CardDefaults.cardColors(
-                                    containerColor = if (isActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.05f) 
-                                                     else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
-                                ),
-                                border = if (isActive) BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else null
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(12.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.weight(1f)
-                                    ) {
-                                        RadioButton(
-                                            selected = isActive,
-                                            onClick = { viewModel.selectActiveLlmProfile(profile.id) },
-                                            colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colorScheme.primary)
-                                        )
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Column {
-                                            Text(
-                                                text = profile.name,
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 13.sp,
-                                                color = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                                            )
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                                Text(
-                                                    text = profile.provider,
-                                                    fontSize = 10.sp,
-                                                    fontWeight = FontWeight.SemiBold,
-                                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                                                    modifier = Modifier
-                                                        .background(
-                                                            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f),
-                                                            RoundedCornerShape(4.dp)
-                                                        )
-                                                        .padding(horizontal = 4.dp, vertical = 2.dp)
-                                                )
-                                                Spacer(modifier = Modifier.width(6.dp))
-                                                Text(
-                                                    text = if (profile.apiKey.length > 8) "...${profile.apiKey.takeLast(6)}" else "***",
-                                                    fontSize = 10.sp,
-                                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
-                                                )
-                                            }
-                                        }
-                                    }
-                                    IconButton(
-                                        onClick = { viewModel.removeLlmProfile(profile.id) }
-                                    ) {
-                                        Icon(
-                                            Icons.Default.Delete,
-                                            contentDescription = "Borrar modelo",
-                                            tint = MaterialTheme.colorScheme.error,
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(10.dp))
-                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    if (!showAddNewForm) {
-                        Button(
-                            onClick = { showAddNewForm = true },
-                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
-                            shape = RoundedCornerShape(10.dp),
-                            modifier = Modifier.fillMaxWidth().testTag("show_add_model_form")
-                        ) {
-                            Icon(Icons.Default.Add, contentDescription = "Suma", modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Agregar Modelo / API Key", fontSize = 12.sp)
-                        }
-                    } else {
-                        Column(
-                            verticalArrangement = Arrangement.spacedBy(10.dp),
-                            modifier = Modifier
-                                .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.02f), RoundedCornerShape(12.dp))
-                                .padding(12.dp)
-                        ) {
-                            Text("Nuevo Perfil de Modelo", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
-
-                            OutlinedTextField(
-                                value = newProfileName,
-                                onValueChange = { newProfileName = it },
-                                label = { Text("Nombre descriptivo (ej: OpenAI Trabajo)") },
-                                shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.fillMaxWidth().testTag("new_model_name_input"),
-                                singleLine = true
-                            )
-
-                            // Provider Selector Row
-                            Text("Proveedor:", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                listOf("Gemini", "OpenAI", "Claude").forEach { prov ->
-                                    val isSelected = newProfileProvider == prov
-                                    Card(
-                                        colors = CardDefaults.cardColors(
-                                            containerColor = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.1f) 
-                                                             else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                                        ),
-                                        border = if (isSelected) BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else null,
-                                        modifier = Modifier
-                                            .weight(1.0f)
-                                            .clickable { newProfileProvider = prov }
-                                    ) {
-                                        Box(
-                                            modifier = Modifier.padding(8.dp).fillMaxWidth(),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Text(prov, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                        }
-                                    }
-                                }
-                            }
-
-                            OutlinedTextField(
-                                value = newProfileKey,
-                                onValueChange = { newProfileKey = it },
-                                label = { Text("API Key") },
-                                shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.fillMaxWidth().testTag("new_model_key_input"),
-                                singleLine = true
-                            )
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                OutlinedButton(
-                                    onClick = { showAddNewForm = false },
-                                    shape = RoundedCornerShape(8.dp),
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Text("Cancelar", fontSize = 12.sp)
-                                }
-
-                                Button(
-                                    onClick = {
-                                        if (newProfileName.isNotBlank() && newProfileKey.isNotBlank()) {
-                                            viewModel.addLlmProfile(newProfileName, newProfileProvider, newProfileKey)
-                                            newProfileName = ""
-                                            newProfileKey = ""
-                                            showAddNewForm = false
-                                        }
-                                    },
-                                    shape = RoundedCornerShape(8.dp),
-                                    modifier = Modifier.weight(1f).testTag("save_model_button")
-                                ) {
-                                    Text("Guardar", fontSize = 12.sp)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Section 2: Whisper Local Offline Control
-        item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = t("local_whisper_header"),
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = t("local_whisper_sub"),
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column {
-                            Text(
-                                text = t("download_status"),
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            Text(
-                                text = when (whisperStatus) {
-                                    "Ready" -> t("download_ready")
-                                    "Downloading" -> t("download_progress_text")
-                                    else -> t("download_not_started")
-                                },
-                                fontSize = 11.sp,
-                                color = if (whisperStatus == "Ready") Color(0xFF10B981) else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-
-                        Button(
-                            onClick = { viewModel.downloadLocalWhisper() },
-                            enabled = whisperStatus != "Ready" && whisperStatus != "Downloading",
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.primary
-                            ),
-                            shape = RoundedCornerShape(8.dp)
-                        ) {
-                            Text(
-                                text = if (whisperStatus == "Downloading") t("downloading_btn") else t("download_btn"),
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
-
-                    if (whisperStatus == "Downloading") {
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            LinearProgressIndicator(
-                                progress = { whisperProgress / 100f },
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(6.dp)
-                                    .clip(RoundedCornerShape(3.dp)),
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "$whisperProgress%",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                    }
                 }
             }
         }

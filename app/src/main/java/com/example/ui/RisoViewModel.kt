@@ -15,10 +15,15 @@ import com.example.service.email.EmailAccount
 import com.example.service.llm.*
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import org.json.JSONObject
 import java.util.*
+import java.util.concurrent.TimeUnit
 
 class RisoViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -79,6 +84,10 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
     // Multiple LLM Profiles / API keys cada uno
     val llmProfiles = MutableStateFlow<List<LlmProfile>>(emptyList())
     val activeLlmProfileId = MutableStateFlow<String?>(null)
+
+    // Multiple STT Profiles (Remote API / Local Whisper)
+    val sttProfiles = MutableStateFlow<List<SttProfile>>(emptyList())
+    val activeSttProfileId = MutableStateFlow<String?>(null)
 
     // STT & Whisper Settings
     private val _sttProvider = MutableStateFlow("Whisper API") // "Whisper API" | "Whisper Local small-v3"
@@ -154,16 +163,43 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                 // Seed standard/existing ones
                 val initList = mutableListOf<LlmProfile>()
                 val geminiApiKey = repository.getSetting("gemini_api_key") ?: ""
-                initList.add(LlmProfile("init_gemini", "Gemini Oficial", "Gemini", geminiApiKey))
+                initList.add(
+                    LlmProfile(
+                        id = "init_gemini",
+                        name = "Gemini Oficial",
+                        provider = "Gemini",
+                        apiKey = geminiApiKey,
+                        apiEndpoint = "https://generativelanguage.googleapis.com",
+                        modelName = "gemini-1.5-flash"
+                    )
+                )
                 
                 val openaiApiKey = repository.getSetting("openai_api_key") ?: ""
                 if (openaiApiKey.isNotBlank()) {
-                    initList.add(LlmProfile("init_openai", "OpenAI Standard", "OpenAI", openaiApiKey))
+                    initList.add(
+                        LlmProfile(
+                            id = "init_openai",
+                            name = "OpenAI Standard",
+                            provider = "OpenAI",
+                            apiKey = openaiApiKey,
+                            apiEndpoint = "https://api.openai.com/v1",
+                            modelName = "gpt-4o-mini"
+                        )
+                    )
                 }
                 
                 val claudeApiKey = repository.getSetting("claude_api_key") ?: ""
                 if (claudeApiKey.isNotBlank()) {
-                    initList.add(LlmProfile("init_claude", "Claude Anthropic", "Claude", claudeApiKey))
+                    initList.add(
+                        LlmProfile(
+                            id = "init_claude",
+                            name = "Claude Anthropic",
+                            provider = "Claude",
+                            apiKey = claudeApiKey,
+                            apiEndpoint = "https://api.anthropic.com/v1",
+                            modelName = "claude-3-5-sonnet-20240620"
+                        )
+                    )
                 }
                 
                 llmProfiles.value = initList
@@ -174,7 +210,7 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
 
-            // STT settings
+            // STT settings & Multiple STT Profiles
             val savedStt = repository.getSetting("selected_stt_provider") ?: "Whisper API"
             _sttProvider.value = savedStt
 
@@ -182,6 +218,47 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
             _localWhisperStatus.value = whisperStatus
             if (whisperStatus == "Ready") {
                 _localWhisperProgress.value = 1.0f
+            }
+
+            val sttProfilesJson = repository.getSetting("stt_profiles_json") ?: ""
+            val activeSttId = repository.getSetting("active_stt_profile_id") ?: ""
+            if (sttProfilesJson.isNotBlank()) {
+                val parsedStt = parseSttProfiles(sttProfilesJson)
+                sttProfiles.value = parsedStt
+                if (parsedStt.any { it.id == activeSttId }) {
+                    activeSttProfileId.value = activeSttId
+                } else if (parsedStt.isNotEmpty()) {
+                    activeSttProfileId.value = parsedStt.first().id
+                    repository.saveSetting("active_stt_profile_id", parsedStt.first().id)
+                }
+            } else {
+                val initStt = mutableListOf<SttProfile>()
+                val whisperApiKey = repository.getSetting("whisper_api_key") ?: ""
+                initStt.add(
+                    SttProfile(
+                        id = "stt_remote_default",
+                        name = "Whisper API Remoto",
+                        isLocal = false,
+                        apiEndpoint = "https://api.openai.com/v1/audio/transcriptions",
+                        modelName = "whisper-1",
+                        apiKey = whisperApiKey
+                    )
+                )
+                initStt.add(
+                    SttProfile(
+                        id = "stt_local_default",
+                        name = "Whisper Local (Offline)",
+                        isLocal = true,
+                        apiEndpoint = "",
+                        modelName = "whisper-small-v3",
+                        apiKey = ""
+                    )
+                )
+                sttProfiles.value = initStt
+                val defaultId = if (savedStt == "Whisper Local small-v3") "stt_local_default" else "stt_remote_default"
+                activeSttProfileId.value = defaultId
+                repository.saveSetting("active_stt_profile_id", defaultId)
+                saveSttProfilesToDb(initStt)
             }
             
             // Auto create session if empty
@@ -545,11 +622,16 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                     val internetSearchEnabled = repository.getSetting("internet_search_enabled") == "true"
                     val searchProvider = repository.getSetting("search_provider") ?: "duckduckgo_scraper"
 
+                    val endpoint = activeProf?.apiEndpoint?.ifBlank { null }
+                    val modelName = activeProf?.modelName?.ifBlank { null }
+
                     // Call LLM Resolver with tools
                     val response = llmService.resolveLlm(
                         history = conversation,
                         provider = provider,
                         customApiKey = key,
+                        apiEndpoint = endpoint,
+                        modelName = modelName,
                         mcpEmailEnabled = mcpEmailEnabled,
                         mcpGithubEnabled = mcpGithubEnabled,
                         mcpGitlabEnabled = mcpGitlabEnabled,
@@ -933,10 +1015,15 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
             val internetSearchEnabled = repository.getSetting("internet_search_enabled") == "true"
             val searchProvider = repository.getSetting("search_provider") ?: "duckduckgo_scraper"
 
+            val endpoint = activeProf?.apiEndpoint?.ifBlank { null }
+            val modelName = activeProf?.modelName?.ifBlank { null }
+
             val nextResponse = llmService.resolveLlm(
                 history = conversation,
                 provider = provider,
                 customApiKey = key,
+                apiEndpoint = endpoint,
+                modelName = modelName,
                 mcpEmailEnabled = mcpEmailEnabled,
                 mcpGithubEnabled = mcpGithubEnabled,
                 mcpGitlabEnabled = mcpGitlabEnabled,
@@ -1005,7 +1092,9 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                         id = obj.getString("id"),
                         name = obj.getString("name"),
                         provider = obj.getString("provider"),
-                        apiKey = obj.getString("apiKey")
+                        apiKey = obj.getString("apiKey"),
+                        apiEndpoint = obj.optString("apiEndpoint", ""),
+                        modelName = obj.optString("modelName", "")
                     )
                 )
             }
@@ -1024,6 +1113,8 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                 obj.put("name", prof.name)
                 obj.put("provider", prof.provider)
                 obj.put("apiKey", prof.apiKey)
+                obj.put("apiEndpoint", prof.apiEndpoint)
+                obj.put("modelName", prof.modelName)
                 array.put(obj)
             }
             viewModelScope.launch {
@@ -1034,13 +1125,27 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun addLlmProfile(name: String, provider: String, apiKey: String) {
+    fun addLlmProfile(name: String, provider: String, apiKey: String, apiEndpoint: String = "", modelName: String = "") {
         if (name.isBlank() || apiKey.isBlank()) return
+        val defaultEndpoint = when (provider) {
+            "Gemini" -> "https://generativelanguage.googleapis.com"
+            "OpenAI" -> "https://api.openai.com/v1"
+            "Claude" -> "https://api.anthropic.com/v1"
+            else -> "https://api.openai.com/v1"
+        }
+        val defaultModel = when (provider) {
+            "Gemini" -> "gemini-1.5-flash"
+            "OpenAI" -> "gpt-4o-mini"
+            "Claude" -> "claude-3-5-sonnet-20240620"
+            else -> "custom-model"
+        }
         val newProfile = LlmProfile(
             id = UUID.randomUUID().toString(),
             name = name,
             provider = provider,
-            apiKey = apiKey
+            apiKey = apiKey,
+            apiEndpoint = if (apiEndpoint.isNotBlank()) apiEndpoint else defaultEndpoint,
+            modelName = if (modelName.isNotBlank()) modelName else defaultModel
         )
         val updatedList = llmProfiles.value + newProfile
         llmProfiles.value = updatedList
@@ -1079,6 +1184,232 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // --- STT Profile Management ---
+    fun parseSttProfiles(json: String): List<SttProfile> {
+        val list = mutableListOf<SttProfile>()
+        try {
+            val array = org.json.JSONArray(json)
+            for (i in 0 until array.length()) {
+                val obj = array.getJSONObject(i)
+                list.add(
+                    SttProfile(
+                        id = obj.getString("id"),
+                        name = obj.getString("name"),
+                        isLocal = obj.getBoolean("isLocal"),
+                        apiEndpoint = obj.optString("apiEndpoint", ""),
+                        modelName = obj.optString("modelName", "whisper-1"),
+                        apiKey = obj.optString("apiKey", "")
+                    )
+                )
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error parsing stt profiles json", e)
+        }
+        return list
+    }
+
+    fun saveSttProfilesToDb(list: List<SttProfile>) {
+        try {
+            val array = org.json.JSONArray()
+            for (prof in list) {
+                val obj = org.json.JSONObject()
+                obj.put("id", prof.id)
+                obj.put("name", prof.name)
+                obj.put("isLocal", prof.isLocal)
+                obj.put("apiEndpoint", prof.apiEndpoint)
+                obj.put("modelName", prof.modelName)
+                obj.put("apiKey", prof.apiKey)
+                array.put(obj)
+            }
+            viewModelScope.launch {
+                repository.saveSetting("stt_profiles_json", array.toString())
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error saving stt profiles json", e)
+        }
+    }
+
+    fun addSttProfile(name: String, isLocal: Boolean, apiEndpoint: String, modelName: String, apiKey: String) {
+        if (name.isBlank()) return
+        val newProfile = SttProfile(
+            id = UUID.randomUUID().toString(),
+            name = name,
+            isLocal = isLocal,
+            apiEndpoint = if (isLocal) "" else (if (apiEndpoint.isNotBlank()) apiEndpoint else "https://api.openai.com/v1/audio/transcriptions"),
+            modelName = if (modelName.isNotBlank()) modelName else (if (isLocal) "whisper-small-v3" else "whisper-1"),
+            apiKey = apiKey
+        )
+        val updated = sttProfiles.value + newProfile
+        sttProfiles.value = updated
+        saveSttProfilesToDb(updated)
+        if (activeSttProfileId.value == null || activeSttProfileId.value == "") {
+            selectActiveSttProfile(newProfile.id)
+        }
+    }
+
+    fun removeSttProfile(profileId: String) {
+        val updated = sttProfiles.value.filter { it.id != profileId }
+        sttProfiles.value = updated
+        saveSttProfilesToDb(updated)
+        if (activeSttProfileId.value == profileId) {
+            val next = updated.firstOrNull()
+            if (next != null) {
+                selectActiveSttProfile(next.id)
+            } else {
+                activeSttProfileId.value = null
+                viewModelScope.launch {
+                    repository.saveSetting("active_stt_profile_id", "")
+                }
+            }
+        }
+    }
+
+    fun selectActiveSttProfile(profileId: String) {
+        activeSttProfileId.value = profileId
+        viewModelScope.launch {
+            repository.saveSetting("active_stt_profile_id", profileId)
+            val profile = sttProfiles.value.find { it.id == profileId }
+            if (profile != null) {
+                _sttProvider.value = if (profile.isLocal) "Whisper Local small-v3" else "Whisper API"
+                repository.saveSetting("selected_stt_provider", _sttProvider.value)
+                if (!profile.isLocal && profile.apiKey.isNotBlank()) {
+                    repository.saveSetting("whisper_api_key", profile.apiKey)
+                }
+            }
+        }
+    }
+
+    // --- Dynamic Connection Testers for LLMs and STT ---
+    fun testLlmConnection(
+        provider: String,
+        apiEndpoint: String,
+        modelName: String,
+        apiKey: String,
+        onResult: (Boolean, String) -> Unit
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                if (apiKey.isBlank()) {
+                    withContext(Dispatchers.Main) {
+                        onResult(false, "API Key vacía")
+                    }
+                    return@launch
+                }
+                val cleanKey = apiKey.trim()
+                if (provider.equals("Gemini", ignoreCase = true)) {
+                    val client = OkHttpClient.Builder()
+                        .connectTimeout(6, TimeUnit.SECONDS)
+                        .readTimeout(6, TimeUnit.SECONDS)
+                        .build()
+                    val url = "https://generativelanguage.googleapis.com/v1beta/models?key=$cleanKey"
+                    val request = Request.Builder().url(url).get().build()
+                    client.newCall(request).execute().use { response ->
+                        val success = response.isSuccessful
+                        val msg = if (success) "✓ Conexión exitosa" else "✕ Error ${response.code} (revisa API Key)"
+                        withContext(Dispatchers.Main) {
+                            onResult(success, msg)
+                        }
+                    }
+                } else if (provider.equals("Claude", ignoreCase = true)) {
+                    val client = OkHttpClient.Builder()
+                        .connectTimeout(6, TimeUnit.SECONDS)
+                        .readTimeout(6, TimeUnit.SECONDS)
+                        .build()
+                    val base = if (apiEndpoint.isNotBlank()) apiEndpoint.trimEnd('/') else "https://api.anthropic.com/v1"
+                    val url = "$base/models"
+                    val request = Request.Builder()
+                        .url(url)
+                        .addHeader("x-api-key", cleanKey)
+                        .addHeader("anthropic-version", "2023-06-01")
+                        .get()
+                        .build()
+                    client.newCall(request).execute().use { response ->
+                        val success = response.code in 200..299 || (response.code in 400..405 && response.code != 401 && response.code != 403)
+                        val msg = if (success) "✓ Conexión exitosa" else "✕ Error ${response.code} (revisa API Key)"
+                        withContext(Dispatchers.Main) {
+                            onResult(success, msg)
+                        }
+                    }
+                } else {
+                    // OpenAI or OpenAI-Compatible / Custom Endpoint
+                    val client = OkHttpClient.Builder()
+                        .connectTimeout(6, TimeUnit.SECONDS)
+                        .readTimeout(6, TimeUnit.SECONDS)
+                        .build()
+                    val base = if (apiEndpoint.isNotBlank()) apiEndpoint.trimEnd('/') else "https://api.openai.com/v1"
+                    val url = "$base/models"
+                    val request = Request.Builder()
+                        .url(url)
+                        .addHeader("Authorization", "Bearer $cleanKey")
+                        .get()
+                        .build()
+                    client.newCall(request).execute().use { response ->
+                        val success = response.isSuccessful || (response.code in 400..405 && response.code != 401 && response.code != 403)
+                        val msg = if (success) "✓ Conexión exitosa" else "✕ Error ${response.code} (revisa API Key)"
+                        withContext(Dispatchers.Main) {
+                            onResult(success, msg)
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    onResult(false, "✕ Error: ${e.localizedMessage ?: "Fallo de red"}")
+                }
+            }
+        }
+    }
+
+    fun testSttConnection(
+        isLocal: Boolean,
+        apiEndpoint: String,
+        modelName: String,
+        apiKey: String,
+        onResult: (Boolean, String) -> Unit
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                if (isLocal) {
+                    val ready = _localWhisperStatus.value == "Ready"
+                    withContext(Dispatchers.Main) {
+                        if (ready) {
+                            onResult(true, "✓ Whisper Local listo")
+                        } else {
+                            onResult(false, "⚠️ Modelo local no descargado aún")
+                        }
+                    }
+                } else {
+                    if (apiKey.isBlank()) {
+                        withContext(Dispatchers.Main) {
+                            onResult(false, "API Key requerida")
+                        }
+                        return@launch
+                    }
+                    val client = OkHttpClient.Builder()
+                        .connectTimeout(6, TimeUnit.SECONDS)
+                        .readTimeout(6, TimeUnit.SECONDS)
+                        .build()
+                    val targetUrl = if (apiEndpoint.isNotBlank()) apiEndpoint else "https://api.openai.com/v1/audio/transcriptions"
+                    val request = Request.Builder()
+                        .url(targetUrl)
+                        .addHeader("Authorization", "Bearer ${apiKey.trim()}")
+                        .get()
+                        .build()
+                    client.newCall(request).execute().use { response ->
+                        val reachable = response.code != 404 && response.code != 401 && response.code != 403
+                        val msg = if (reachable) "✓ Endpoint accesible" else "✕ Error ${response.code} (revisa API Key/URL)"
+                        withContext(Dispatchers.Main) {
+                            onResult(reachable, msg)
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    onResult(false, "✕ Error: ${e.localizedMessage ?: "Fallo de red"}")
+                }
+            }
+        }
+    }
+
     fun attachCustomFile(name: String) {
         _attachedImage.value = name
     }
@@ -1091,6 +1422,8 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
             activeEmailAccountId.value = null
             llmProfiles.value = emptyList()
             activeLlmProfileId.value = null
+            sttProfiles.value = emptyList()
+            activeSttProfileId.value = null
             _liveInbox.value = emptyList()
             createNewSession()
             onFinished()
@@ -1116,6 +1449,17 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
 data class LlmProfile(
     val id: String,
     val name: String,
-    val provider: String, // "Gemini" | "OpenAI" | "Claude"
-    val apiKey: String
+    val provider: String, // "Gemini" | "OpenAI" | "Claude" | "Compatible"
+    val apiKey: String,
+    val apiEndpoint: String = "",
+    val modelName: String = ""
+)
+
+data class SttProfile(
+    val id: String,
+    val name: String,
+    val isLocal: Boolean, // true = Local Whisper, false = Remote API
+    val apiEndpoint: String = "",
+    val modelName: String = "whisper-1",
+    val apiKey: String = ""
 )

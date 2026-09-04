@@ -341,8 +341,10 @@ class LlmService {
     // Execute completion against Gemini (supports fallback if customized key is empty)
     suspend fun resolveLlm(
         history: List<GeminiContent>,
-        provider: String, // Gemini, OpenAI, Claude
+        provider: String, // Gemini, OpenAI, Claude, etc.
         customApiKey: String? = null,
+        apiEndpoint: String? = null,
+        modelName: String? = null,
         mcpEmailEnabled: Boolean = true,
         mcpGithubEnabled: Boolean = false,
         mcpGitlabEnabled: Boolean = false,
@@ -407,8 +409,8 @@ class LlmService {
                     generationConfig = GeminiGenerationConfig(temperature = 0.4f)
                 )
 
-                // Call gemini-3.5-flash as the primary resolver
-                return api.generateContent(model = "gemini-3.5-flash", key = resolvedKey, request = request)
+                val modelToUse = if (!modelName.isNullOrBlank()) modelName else "gemini-1.5-flash"
+                return api.generateContent(model = modelToUse, key = resolvedKey, request = request)
             } else {
                 // Return a simulated, high-quality representation for OpenAI/Claude if keys are provided or simulate via Gemini
                 // This allows the multi-LLM UI to work seamlessly and gracefully!
