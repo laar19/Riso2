@@ -23,6 +23,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.util.*
 import java.util.concurrent.TimeUnit
@@ -1595,8 +1597,8 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
     fun testLlmConnection(
         provider: String,
         apiEndpoint: String,
-        modelName: String,
         apiKey: String,
+        modelName: String,
         onResult: (Boolean, String) -> Unit
     ) {
         viewModelScope.launch(Dispatchers.IO) {
@@ -1645,22 +1647,73 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                 } else {
                     // OpenAI or OpenAI-Compatible / Custom Endpoint
                     val client = OkHttpClient.Builder()
-                        .connectTimeout(6, TimeUnit.SECONDS)
-                        .readTimeout(6, TimeUnit.SECONDS)
+                        .connectTimeout(8, TimeUnit.SECONDS)
+                        .readTimeout(8, TimeUnit.SECONDS)
                         .build()
                     val base = if (apiEndpoint.isNotBlank()) apiEndpoint.trimEnd('/') else "https://api.openai.com/v1"
-                    val url = "$base/models"
-                    val request = Request.Builder()
-                        .url(url)
+                    val testModel = if (modelName.isNotBlank()) modelName.trim() else "deepseek-v4-flash"
+
+                    // Try chat/completions directly or /models
+                    val chatUrl = if (base.endsWith("/chat/completions")) base else "$base/chat/completions"
+                    val testJson = org.json.JSONObject().apply {
+                        put("model", testModel)
+                        put("messages", org.json.JSONArray().apply {
+                            put(org.json.JSONObject().apply {
+                                put("role", "user")
+                                put("content", "ping")
+                            })
+                        })
+                        put("max_tokens", 1)
+                    }
+                    val mediaType = "application/json; charset=utf-8".toMediaType()
+                    val body = testJson.toString().toRequestBody(mediaType)
+
+                    val req = Request.Builder()
+                        .url(chatUrl)
                         .addHeader("Authorization", "Bearer $cleanKey")
-                        .get()
+                        .addHeader("Content-Type", "application/json")
+                        .post(body)
                         .build()
-                    client.newCall(request).execute().use { response ->
-                        val success = response.isSuccessful || (response.code in 400..405 && response.code != 401 && response.code != 403)
-                        val msg = if (success) "✓ Conexión exitosa" else "✕ Error ${response.code} (revisa API Key)"
-                        withContext(Dispatchers.Main) {
-                            onResult(success, msg)
+
+                    var success = false
+                    var msg = ""
+                    try {
+                        client.newCall(req).execute().use { resp ->
+                            if (resp.isSuccessful) {
+                                success = true
+                                msg = "✓ Conexión exitosa"
+                            } else if (resp.code == 401 || resp.code == 403) {
+                                success = false
+                                msg = "✕ Error ${resp.code}: Clave API rechazada"
+                            } else if (resp.code == 404) {
+                                // Fallback: try GET /models
+                                val modelsReq = Request.Builder()
+                                    .url("$base/models")
+                                    .addHeader("Authorization", "Bearer $cleanKey")
+                                    .get()
+                                    .build()
+                                client.newCall(modelsReq).execute().use { mResp ->
+                                    if (mResp.isSuccessful || (mResp.code !in listOf(401, 403, 404))) {
+                                        success = true
+                                        msg = "✓ Conexión exitosa"
+                                    } else {
+                                        success = false
+                                        msg = "✕ Error ${resp.code} en endpoint"
+                                    }
+                                }
+                            } else {
+                                // 400 or other non-auth code often means valid API reached with model/param nuance
+                                success = true
+                                msg = "✓ Conexión alcanzada (HTTP ${resp.code})"
+                            }
                         }
+                    } catch (e: Exception) {
+                        success = false
+                        msg = "✕ Error: ${e.localizedMessage ?: "No se pudo conectar"}"
+                    }
+
+                    withContext(Dispatchers.Main) {
+                        onResult(success, msg)
                     }
                 }
             } catch (e: Exception) {
@@ -1674,8 +1727,8 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
     fun testSttConnection(
         isLocal: Boolean,
         apiEndpoint: String,
-        modelName: String,
         apiKey: String,
+        modelName: String,
         onResult: (Boolean, String) -> Unit
     ) {
         viewModelScope.launch(Dispatchers.IO) {

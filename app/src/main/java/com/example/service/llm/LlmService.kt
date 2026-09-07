@@ -402,7 +402,17 @@ class LlmService {
 
             val toolsPayload = if (activeToolsList.isNotEmpty()) activeToolsList else null
 
-            if (provider.equals("Gemini", ignoreCase = true)) {
+            val isGemini = provider.equals("Gemini", ignoreCase = true) || provider.contains("google", ignoreCase = true)
+            val isClaude = provider.equals("Claude", ignoreCase = true) || provider.contains("anthropic", ignoreCase = true)
+
+            if (isGemini) {
+                val resolvedKey = if (!customApiKey.isNullOrBlank()) customApiKey else BuildConfig.GEMINI_API_KEY
+                if (isKeyInvalidOrPlaceholder(resolvedKey)) {
+                    Log.w(TAG, "Gemini API Key is not configured or is placeholder.")
+                    val lastUserMessage = history.lastOrNull { it.role == "user" }?.parts?.firstOrNull()?.text ?: ""
+                    return getErrorResponse(getOfflineAssistantResponse(lastUserMessage))
+                }
+
                 val request = GeminiRequest(
                     contents = history,
                     systemInstruction = GeminiContent(parts = listOf(GeminiPart(text = systemPrompt))),
@@ -412,37 +422,267 @@ class LlmService {
 
                 val modelToUse = if (!modelName.isNullOrBlank()) modelName else "gemini-3.5-flash"
                 return api.generateContent(model = modelToUse, key = resolvedKey, request = request)
-            } else {
-                // Return a simulated, high-quality representation for OpenAI/Claude if keys are provided or simulate via Gemini
-                // This allows the multi-LLM UI to work seamlessly and gracefully!
-                Log.d(TAG, "Simulating $provider using Gemini engine or fallback.")
-                
-                // If they have OpenAI or Claude custom keys, we could call actual endpoints,
-                // but since they might be blank, we leverage Gemini as our secure core router:
-                if (!isKeyInvalidOrPlaceholder(customApiKey)) {
-                    val actualKey = customApiKey ?: ""
-                    val request = GeminiRequest(
-                        contents = history,
-                        systemInstruction = GeminiContent(parts = listOf(GeminiPart(text = "Eres Riso en modo simulador de $provider. Manten el rol y actua con las mismas conexiones MCP: $systemPrompt"))),
-                        tools = toolsPayload,
-                        generationConfig = GeminiGenerationConfig(temperature = 0.5f)
-                    )
-                    return api.generateContent(model = "gemini-3.5-flash", key = actualKey, request = request)
-                } else if (!isKeyInvalidOrPlaceholder(BuildConfig.GEMINI_API_KEY)) {
-                    val request = GeminiRequest(
-                        contents = history,
-                        systemInstruction = GeminiContent(parts = listOf(GeminiPart(text = "Eres Riso en modo simulador de $provider. Manten el rol y actua con las mismas conexiones MCP: $systemPrompt"))),
-                        tools = toolsPayload,
-                        generationConfig = GeminiGenerationConfig(temperature = 0.5f)
-                    )
-                    return api.generateContent(model = "gemini-3.5-flash", key = BuildConfig.GEMINI_API_KEY, request = request)
-                } else {
-                    return getErrorResponse("⚠️ **Clave de API para $provider No Configurada**\n\nNo se ha detectado ninguna clave de API para $provider, y tampoco hay una clave alternativa global de Gemini.\n\nPor favor, ve a **Ajustes** en el menú lateral para configurar tus claves de forma segura y habilitar la inteligencia.")
+            } else if (isClaude) {
+                if (customApiKey.isNullOrBlank()) {
+                    return getErrorResponse("⚠️ **Clave de API para Claude no configurada**\n\nPor favor, ingresa tu clave de Anthropic Claude en la pestaña Ajustes.")
                 }
+                return callAnthropicClaude(
+                    apiKey = customApiKey,
+                    modelName = modelName ?: "claude-3-5-sonnet-20241022",
+                    systemPrompt = systemPrompt,
+                    history = history
+                )
+            } else {
+                // OpenAI or OpenAI-Compatible (OpenCode, DeepSeek, Ollama, Groq, etc.)
+                if (customApiKey.isNullOrBlank()) {
+                    return getErrorResponse("⚠️ **Clave de API para $provider no configurada**\n\nPor favor, ingresa tu clave de API en Ajustes para el modelo **${modelName ?: "seleccionado"}**.")
+                }
+                return callOpenAiCompatible(
+                    endpointUrl = apiEndpoint ?: "",
+                    apiKey = customApiKey,
+                    modelName = modelName ?: "",
+                    systemPrompt = systemPrompt,
+                    history = history,
+                    activeToolsList = activeToolsList
+                )
             }
         } catch (e: Throwable) {
             Log.w(TAG, "Notice in resolveLlm: ${e.message}")
             return getErrorResponse("⚠️ **Error de Conexión o Servicio**\n\nNo se pudo obtener respuesta del resolvedor de IA. Detalles: ${e.localizedMessage ?: e.message ?: "Error desconocido de red"}\n\nPor favor, verifica tu conexión a internet o comprueba si tu clave de API configurada es correcta.")
+        }
+    }
+
+    private suspend fun callOpenAiCompatible(
+        endpointUrl: String,
+        apiKey: String,
+        modelName: String,
+        systemPrompt: String,
+        history: List<GeminiContent>,
+        activeToolsList: List<GeminiTool>
+    ): GeminiResponse = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val base = if (endpointUrl.isNotBlank()) endpointUrl.trimEnd('/') else "https://api.openai.com/v1"
+        val fullUrl = if (base.endsWith("/chat/completions")) base else "$base/chat/completions"
+
+        val messagesArray = JSONArray()
+        // System instruction
+        val sysObj = JSONObject()
+        sysObj.put("role", "system")
+        sysObj.put("content", systemPrompt)
+        messagesArray.put(sysObj)
+
+        // Conversation history
+        for (item in history) {
+            val role = if (item.role == "model") "assistant" else "user"
+            val textPart = item.parts.firstOrNull { !it.text.isNullOrBlank() }?.text
+            if (!textPart.isNullOrBlank()) {
+                val msgObj = JSONObject()
+                msgObj.put("role", role)
+                msgObj.put("content", textPart)
+                messagesArray.put(msgObj)
+            }
+        }
+
+        val jsonBody = JSONObject()
+        jsonBody.put("model", if (modelName.isNotBlank()) modelName else "deepseek-v4-flash")
+        jsonBody.put("messages", messagesArray)
+        jsonBody.put("temperature", 0.4)
+
+        // Optional tools
+        val toolsArray = JSONArray()
+        for (tool in activeToolsList) {
+            tool.functionDeclarations?.forEach { decl ->
+                val fnObj = JSONObject()
+                fnObj.put("name", decl.name)
+                fnObj.put("description", decl.description)
+                val paramsObj = JSONObject()
+                paramsObj.put("type", "object")
+                val propsObj = JSONObject()
+                decl.parameters?.properties?.forEach { (k, v) ->
+                    val p = JSONObject()
+                    p.put("type", v.type.lowercase())
+                    p.put("description", v.description)
+                    propsObj.put(k, p)
+                }
+                paramsObj.put("properties", propsObj)
+                val reqArr = JSONArray()
+                decl.parameters?.required?.forEach { reqArr.put(it) }
+                paramsObj.put("required", reqArr)
+                fnObj.put("parameters", paramsObj)
+
+                val toolObj = JSONObject()
+                toolObj.put("type", "function")
+                toolObj.put("function", fnObj)
+                toolsArray.put(toolObj)
+            }
+        }
+        if (toolsArray.length() > 0) {
+            jsonBody.put("tools", toolsArray)
+        }
+
+        val mediaType = "application/json; charset=utf-8".toMediaType()
+        var requestBody = jsonBody.toString().toRequestBody(mediaType)
+
+        var request = Request.Builder()
+            .url(fullUrl)
+            .addHeader("Authorization", "Bearer ${apiKey.trim()}")
+            .addHeader("Content-Type", "application/json")
+            .post(requestBody)
+            .build()
+
+        var response = okHttpClient.newCall(request).execute()
+        var respString = response.body?.string() ?: ""
+
+        // If tools failed with 400 (some endpoints do not support the 'tools' parameter), retry without tools!
+        if (response.code == 400 && toolsArray.length() > 0) {
+            response.close()
+            jsonBody.remove("tools")
+            requestBody = jsonBody.toString().toRequestBody(mediaType)
+            request = Request.Builder()
+                .url(fullUrl)
+                .addHeader("Authorization", "Bearer ${apiKey.trim()}")
+                .addHeader("Content-Type", "application/json")
+                .post(requestBody)
+                .build()
+            response = okHttpClient.newCall(request).execute()
+            respString = response.body?.string() ?: ""
+        }
+
+        if (!response.isSuccessful) {
+            var errMsg = "Error HTTP ${response.code}"
+            try {
+                val errJson = JSONObject(respString)
+                if (errJson.has("error")) {
+                    val errObj = errJson.optJSONObject("error")
+                    if (errObj != null && errObj.has("message")) {
+                        errMsg = errObj.getString("message")
+                    } else if (errJson.optString("error").isNotBlank()) {
+                        errMsg = errJson.getString("error")
+                    }
+                } else if (errJson.has("message")) {
+                    errMsg = errJson.getString("message")
+                }
+            } catch (_: Exception) {
+                if (respString.isNotBlank()) {
+                    errMsg = respString.take(250)
+                }
+            }
+            return@withContext getErrorResponse(
+                "⚠️ **Error en Proveedor LLM (HTTP ${response.code})**\n\n$errMsg\n\n**Endpoint:** $fullUrl\n**Modelo:** ${if (modelName.isNotBlank()) modelName else "default"}\n\nVerifica tu clave de API y el endpoint configurado."
+            )
+        }
+
+        try {
+            val root = JSONObject(respString)
+            val choices = root.optJSONArray("choices")
+            if (choices == null || choices.length() == 0) {
+                return@withContext getErrorResponse("Respuesta vacía del modelo (sin choices devueltas).")
+            }
+            val firstChoice = choices.getJSONObject(0)
+            val message = firstChoice.getJSONObject("message")
+            val content = message.optString("content", "")
+            val toolCalls = message.optJSONArray("tool_calls")
+
+            val parts = mutableListOf<GeminiPart>()
+            if (toolCalls != null && toolCalls.length() > 0) {
+                for (i in 0 until toolCalls.length()) {
+                    val tc = toolCalls.getJSONObject(i)
+                    val fn = tc.getJSONObject("function")
+                    val fnName = fn.getString("name")
+                    val argsStr = fn.optString("arguments", "{}")
+                    val argsMap = mutableMapOf<String, Any?>()
+                    try {
+                        val argsJson = JSONObject(argsStr)
+                        for (k in argsJson.keys()) {
+                            argsMap[k] = argsJson.get(k)
+                        }
+                    } catch (_: Exception) {}
+                    parts.add(GeminiPart(functionCall = GeminiFunctionCall(name = fnName, args = argsMap)))
+                }
+            }
+
+            if (content.isNotBlank() || parts.isEmpty()) {
+                parts.add(0, GeminiPart(text = content))
+            }
+
+            return@withContext GeminiResponse(
+                candidates = listOf(
+                    GeminiCandidate(
+                        content = GeminiContent(role = "model", parts = parts),
+                        finishReason = firstChoice.optString("finish_reason", "STOP")
+                    )
+                )
+            )
+        } catch (e: Exception) {
+            return@withContext getErrorResponse("Error al procesar respuesta del modelo: ${e.localizedMessage}")
+        }
+    }
+
+    private suspend fun callAnthropicClaude(
+        apiKey: String,
+        modelName: String,
+        systemPrompt: String,
+        history: List<GeminiContent>
+    ): GeminiResponse = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val fullUrl = "https://api.anthropic.com/v1/messages"
+        val messagesArray = JSONArray()
+        for (item in history) {
+            val role = if (item.role == "model") "assistant" else "user"
+            val textPart = item.parts.firstOrNull { !it.text.isNullOrBlank() }?.text
+            if (!textPart.isNullOrBlank()) {
+                val msgObj = JSONObject()
+                msgObj.put("role", role)
+                msgObj.put("content", textPart)
+                messagesArray.put(msgObj)
+            }
+        }
+        if (messagesArray.length() == 0) {
+            val dummy = JSONObject()
+            dummy.put("role", "user")
+            dummy.put("content", "Hola")
+            messagesArray.put(dummy)
+        }
+
+        val jsonBody = JSONObject()
+        jsonBody.put("model", if (modelName.isNotBlank()) modelName else "claude-3-5-sonnet-20241022")
+        jsonBody.put("max_tokens", 4096)
+        jsonBody.put("system", systemPrompt)
+        jsonBody.put("messages", messagesArray)
+
+        val mediaType = "application/json; charset=utf-8".toMediaType()
+        val requestBody = jsonBody.toString().toRequestBody(mediaType)
+
+        val request = Request.Builder()
+            .url(fullUrl)
+            .addHeader("x-api-key", apiKey.trim())
+            .addHeader("anthropic-version", "2023-06-01")
+            .addHeader("content-type", "application/json")
+            .post(requestBody)
+            .build()
+
+        val response = okHttpClient.newCall(request).execute()
+        val respString = response.body?.string() ?: ""
+
+        if (!response.isSuccessful) {
+            return@withContext getErrorResponse("⚠️ **Error Anthropic Claude (HTTP ${response.code})**\n\n$respString")
+        }
+
+        try {
+            val root = JSONObject(respString)
+            val contentArr = root.optJSONArray("content")
+            val text = if (contentArr != null && contentArr.length() > 0) {
+                contentArr.getJSONObject(0).optString("text", "")
+            } else ""
+
+            return@withContext GeminiResponse(
+                candidates = listOf(
+                    GeminiCandidate(
+                        content = GeminiContent(role = "model", parts = listOf(GeminiPart(text = text))),
+                        finishReason = "STOP"
+                    )
+                )
+            )
+        } catch (e: Exception) {
+            return@withContext getErrorResponse("Error al procesar respuesta de Claude: ${e.localizedMessage}")
         }
     }
 

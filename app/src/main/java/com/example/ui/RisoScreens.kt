@@ -1769,13 +1769,18 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
                                     .fillMaxWidth()
                                     .padding(vertical = 4.dp),
                                 colors = CardDefaults.cardColors(
-                                    containerColor = if (isActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.06f)
+                                    containerColor = if (isActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.05f)
                                                      else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)
                                 ),
-                                border = if (isActive) BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else null,
-                                shape = RoundedCornerShape(10.dp)
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (isActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)
+                                    else MaterialTheme.colorScheme.outline.copy(alpha = 0.15f)
+                                ),
+                                shape = RoundedCornerShape(12.dp)
                             ) {
-                                Column(modifier = Modifier.padding(10.dp)) {
+                                Column(modifier = Modifier.padding(12.dp)) {
+                                    // Row 1: Radio + Name + Active Badge on Left, Actions on Right
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
                                         verticalAlignment = Alignment.CenterVertically,
@@ -1789,48 +1794,39 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
                                                 selected = isActive,
                                                 onClick = { viewModel.selectActiveLlmProfile(profile.id) },
                                                 colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colorScheme.primary),
-                                                modifier = Modifier.scale(0.85f)
+                                                modifier = Modifier.size(24.dp)
                                             )
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                            Column {
-                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(
+                                                text = profile.name,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 13.sp,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                color = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                            )
+                                            if (isActive) {
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Surface(
+                                                    color = Color(0xFF10B981).copy(alpha = 0.14f),
+                                                    shape = RoundedCornerShape(4.dp)
+                                                ) {
                                                     Text(
-                                                        text = profile.name,
-                                                        fontWeight = FontWeight.Bold,
-                                                        fontSize = 13.sp,
-                                                        color = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                                                    )
-                                                    if (isActive) {
-                                                        Spacer(modifier = Modifier.width(6.dp))
-                                                        Text(
-                                                            text = "Activo",
-                                                            fontSize = 9.sp,
-                                                            fontWeight = FontWeight.ExtraBold,
-                                                            color = MaterialTheme.colorScheme.primary,
-                                                            modifier = Modifier
-                                                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f), RoundedCornerShape(4.dp))
-                                                                .padding(horizontal = 5.dp, vertical = 1.dp)
-                                                        )
-                                                    }
-                                                }
-                                                Text(
-                                                    text = "${profile.provider} • ${profile.modelName.ifBlank { "default" }}",
-                                                    fontSize = 10.sp,
-                                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                                                )
-                                                if (profile.apiEndpoint.isNotBlank()) {
-                                                    Text(
-                                                        text = profile.apiEndpoint,
+                                                        text = "Activo",
                                                         fontSize = 9.sp,
-                                                        maxLines = 1,
-                                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = Color(0xFF059669),
+                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                                     )
                                                 }
                                             }
                                         }
 
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Button(
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            OutlinedButton(
                                                 onClick = {
                                                     testingLlmId = profile.id
                                                     viewModel.testLlmConnection(profile.provider, profile.apiEndpoint, profile.apiKey, profile.modelName) { ok, msg ->
@@ -1841,10 +1837,10 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
                                                 modifier = Modifier
                                                     .height(28.dp)
                                                     .testTag("test_llm_btn_${profile.id}"),
-                                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
                                                 shape = RoundedCornerShape(6.dp),
-                                                colors = ButtonDefaults.buttonColors(
-                                                    containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)),
+                                                colors = ButtonDefaults.outlinedButtonColors(
                                                     contentColor = MaterialTheme.colorScheme.primary
                                                 )
                                             ) {
@@ -1857,27 +1853,101 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
 
                                             IconButton(
                                                 onClick = { viewModel.removeLlmProfile(profile.id) },
-                                                modifier = Modifier.size(32.dp)
+                                                modifier = Modifier.size(28.dp)
                                             ) {
                                                 Icon(
                                                     Icons.Default.Delete,
                                                     contentDescription = "Borrar",
-                                                    tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f),
-                                                    modifier = Modifier.size(16.dp)
+                                                    tint = MaterialTheme.colorScheme.error.copy(alpha = 0.65f),
+                                                    modifier = Modifier.size(15.dp)
                                                 )
                                             }
                                         }
                                     }
 
-                                    if (testMsg != null) {
+                                    HorizontalDivider(
+                                        modifier = Modifier.padding(vertical = 7.dp),
+                                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.08f)
+                                    )
+
+                                    // Row 2: Symmetric Chips for Provider & Model
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Surface(
+                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
+                                            shape = RoundedCornerShape(4.dp)
+                                        ) {
+                                            Text(
+                                                text = profile.provider,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+
+                                        Surface(
+                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
+                                            shape = RoundedCornerShape(4.dp)
+                                        ) {
+                                            Text(
+                                                text = profile.modelName.ifBlank { "default" },
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
+
+                                    // Row 3: API Endpoint (if configured)
+                                    if (profile.apiEndpoint.isNotBlank()) {
                                         Spacer(modifier = Modifier.height(4.dp))
                                         Text(
-                                            text = testMsg,
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = if (testMsg.startsWith("✓")) Color(0xFF10B981) else MaterialTheme.colorScheme.error,
-                                            modifier = Modifier.padding(start = 32.dp)
+                                            text = "🔗 ${profile.apiEndpoint}",
+                                            fontSize = 9.5.sp,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
                                         )
+                                    }
+
+                                    // Row 4: Status result strip
+                                    if (testMsg != null) {
+                                        Spacer(modifier = Modifier.height(6.dp))
+                                        val isOk = testMsg.startsWith("✓")
+                                        Surface(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            color = if (isOk) Color(0xFF10B981).copy(alpha = 0.1f) else MaterialTheme.colorScheme.error.copy(alpha = 0.08f),
+                                            shape = RoundedCornerShape(6.dp),
+                                            border = BorderStroke(0.5.dp, if (isOk) Color(0xFF10B981).copy(alpha = 0.3f) else MaterialTheme.colorScheme.error.copy(alpha = 0.25f))
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    text = if (isOk) "✓" else "✕",
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = if (isOk) Color(0xFF059669) else MaterialTheme.colorScheme.error
+                                                )
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Text(
+                                                    text = testMsg,
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = if (isOk) Color(0xFF059669) else MaterialTheme.colorScheme.error,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -2115,13 +2185,17 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
                                     .fillMaxWidth()
                                     .padding(vertical = 4.dp),
                                 colors = CardDefaults.cardColors(
-                                    containerColor = if (isActive) MaterialTheme.colorScheme.secondary.copy(alpha = 0.06f)
+                                    containerColor = if (isActive) MaterialTheme.colorScheme.secondary.copy(alpha = 0.05f)
                                                      else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)
                                 ),
-                                border = if (isActive) BorderStroke(1.dp, MaterialTheme.colorScheme.secondary) else null,
-                                shape = RoundedCornerShape(10.dp)
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (isActive) MaterialTheme.colorScheme.secondary.copy(alpha = 0.7f)
+                                    else MaterialTheme.colorScheme.outline.copy(alpha = 0.15f)
+                                ),
+                                shape = RoundedCornerShape(12.dp)
                             ) {
-                                Column(modifier = Modifier.padding(10.dp)) {
+                                Column(modifier = Modifier.padding(12.dp)) {
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
                                         verticalAlignment = Alignment.CenterVertically,
@@ -2135,54 +2209,43 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
                                                 selected = isActive,
                                                 onClick = { viewModel.selectActiveSttProfile(profile.id) },
                                                 colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colorScheme.secondary),
-                                                modifier = Modifier.scale(0.85f)
+                                                modifier = Modifier.size(24.dp)
                                             )
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                            Column {
-                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(
+                                                text = profile.name,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 13.sp,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                color = if (isActive) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurface
+                                            )
+                                            if (isActive) {
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Surface(
+                                                    color = Color(0xFF10B981).copy(alpha = 0.14f),
+                                                    shape = RoundedCornerShape(4.dp)
+                                                ) {
                                                     Text(
-                                                        text = profile.name,
-                                                        fontWeight = FontWeight.Bold,
-                                                        fontSize = 13.sp,
-                                                        color = if (isActive) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurface
-                                                    )
-                                                    if (isActive) {
-                                                        Spacer(modifier = Modifier.width(6.dp))
-                                                        Text(
-                                                            text = "Activo",
-                                                            fontSize = 9.sp,
-                                                            fontWeight = FontWeight.ExtraBold,
-                                                            color = MaterialTheme.colorScheme.secondary,
-                                                            modifier = Modifier
-                                                                .background(MaterialTheme.colorScheme.secondary.copy(alpha = 0.12f), RoundedCornerShape(4.dp))
-                                                                .padding(horizontal = 5.dp, vertical = 1.dp)
-                                                        )
-                                                    }
-                                                }
-                                                Text(
-                                                    text = if (profile.isLocal) "Local (Offline) • ${profile.modelName}" else "Remoto (API) • ${profile.modelName}",
-                                                    fontSize = 10.sp,
-                                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                                                )
-                                                if (!profile.isLocal && profile.apiEndpoint.isNotBlank()) {
-                                                    Text(
-                                                        text = profile.apiEndpoint,
+                                                        text = "Activo",
                                                         fontSize = 9.sp,
-                                                        maxLines = 1,
-                                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = Color(0xFF059669),
+                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                                     )
                                                 }
                                             }
                                         }
 
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
                                             if (profile.isLocal && whisperStatus != "Ready") {
                                                 Button(
                                                     onClick = { viewModel.downloadLocalWhisper() },
                                                     enabled = whisperStatus != "Downloading",
-                                                    modifier = Modifier
-                                                        .height(28.dp)
-                                                        .padding(end = 4.dp),
+                                                    modifier = Modifier.height(28.dp),
                                                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
                                                     shape = RoundedCornerShape(6.dp),
                                                     colors = ButtonDefaults.buttonColors(
@@ -2197,7 +2260,7 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
                                                 }
                                             }
 
-                                            Button(
+                                            OutlinedButton(
                                                 onClick = {
                                                     testingSttId = profile.id
                                                     viewModel.testSttConnection(profile.isLocal, profile.apiEndpoint, profile.apiKey, profile.modelName) { ok, msg ->
@@ -2208,10 +2271,10 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
                                                 modifier = Modifier
                                                     .height(28.dp)
                                                     .testTag("test_stt_btn_${profile.id}"),
-                                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
                                                 shape = RoundedCornerShape(6.dp),
-                                                colors = ButtonDefaults.buttonColors(
-                                                    containerColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.15f),
+                                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.4f)),
+                                                colors = ButtonDefaults.outlinedButtonColors(
                                                     contentColor = MaterialTheme.colorScheme.secondary
                                                 )
                                             ) {
@@ -2224,27 +2287,98 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
 
                                             IconButton(
                                                 onClick = { viewModel.removeSttProfile(profile.id) },
-                                                modifier = Modifier.size(32.dp)
+                                                modifier = Modifier.size(28.dp)
                                             ) {
                                                 Icon(
                                                     Icons.Default.Delete,
                                                     contentDescription = "Borrar",
-                                                    tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f),
-                                                    modifier = Modifier.size(16.dp)
+                                                    tint = MaterialTheme.colorScheme.error.copy(alpha = 0.65f),
+                                                    modifier = Modifier.size(15.dp)
                                                 )
                                             }
                                         }
                                     }
 
-                                    if (testMsg != null) {
+                                    HorizontalDivider(
+                                        modifier = Modifier.padding(vertical = 7.dp),
+                                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.08f)
+                                    )
+
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Surface(
+                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
+                                            shape = RoundedCornerShape(4.dp)
+                                        ) {
+                                            Text(
+                                                text = if (profile.isLocal) "Local (Offline)" else "Remoto (API)",
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+
+                                        Surface(
+                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
+                                            shape = RoundedCornerShape(4.dp)
+                                        ) {
+                                            Text(
+                                                text = profile.modelName.ifBlank { "default" },
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
+
+                                    if (!profile.isLocal && profile.apiEndpoint.isNotBlank()) {
                                         Spacer(modifier = Modifier.height(4.dp))
                                         Text(
-                                            text = testMsg,
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = if (testMsg.startsWith("✓")) Color(0xFF10B981) else MaterialTheme.colorScheme.error,
-                                            modifier = Modifier.padding(start = 32.dp)
+                                            text = "🔗 ${profile.apiEndpoint}",
+                                            fontSize = 9.5.sp,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
                                         )
+                                    }
+
+                                    if (testMsg != null) {
+                                        Spacer(modifier = Modifier.height(6.dp))
+                                        val isOk = testMsg.startsWith("✓")
+                                        Surface(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            color = if (isOk) Color(0xFF10B981).copy(alpha = 0.1f) else MaterialTheme.colorScheme.error.copy(alpha = 0.08f),
+                                            shape = RoundedCornerShape(6.dp),
+                                            border = BorderStroke(0.5.dp, if (isOk) Color(0xFF10B981).copy(alpha = 0.3f) else MaterialTheme.colorScheme.error.copy(alpha = 0.25f))
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    text = if (isOk) "✓" else "✕",
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = if (isOk) Color(0xFF059669) else MaterialTheme.colorScheme.error
+                                                )
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Text(
+                                                    text = testMsg,
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = if (isOk) Color(0xFF059669) else MaterialTheme.colorScheme.error,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                             }
