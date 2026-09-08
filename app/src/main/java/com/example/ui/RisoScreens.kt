@@ -29,6 +29,7 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
@@ -380,8 +381,27 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
     val sttProvider by viewModel.sttProvider.collectAsStateWithLifecycle()
     val whisperStatus by viewModel.localWhisperStatus.collectAsStateWithLifecycle()
     val isRecordingAudio by viewModel.isRecordingAudio.collectAsStateWithLifecycle()
+    val isTranscribingAudio by viewModel.isTranscribingAudio.collectAsStateWithLifecycle()
     val recordingFeedback by viewModel.recordingFeedback.collectAsStateWithLifecycle()
     val attachedImage by viewModel.attachedImage.collectAsStateWithLifecycle()
+
+    val context = LocalContext.current
+    var hasMicPermission by remember {
+        mutableStateOf(
+            androidx.core.content.ContextCompat.checkSelfPermission(
+                context,
+                android.Manifest.permission.RECORD_AUDIO
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        )
+    }
+    val micPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        hasMicPermission = isGranted
+        if (isGranted) {
+            viewModel.startAudioRecording()
+        }
+    }
 
     var textInput by remember { mutableStateOf("") }
     var showAttachMenu by remember { mutableStateOf(false) }
@@ -653,29 +673,63 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
             }
         }
 
-        // Recording Feedback Banner
-        if (isRecordingAudio) {
+        // Recording & Transcription Feedback Banner
+        if (isRecordingAudio || isTranscribingAudio || recordingFeedback.isNotBlank()) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 12.dp, vertical = 6.dp)
-                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f), RoundedCornerShape(12.dp))
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                    .background(
+                        if (isRecordingAudio) MaterialTheme.colorScheme.error.copy(alpha = 0.12f)
+                        else if (isTranscribingAudio) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        RoundedCornerShape(12.dp)
+                    )
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(10.dp)
-                        .clip(CircleShape)
-                        .background(Color.Red)
-                )
+                if (isRecordingAudio) {
+                    Box(
+                        modifier = Modifier
+                            .size(10.dp)
+                            .clip(CircleShape)
+                            .background(Color.Red)
+                    )
+                } else if (isTranscribingAudio) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(14.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = recordingFeedback,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
+                    fontSize = 11.5.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = if (isRecordingAudio) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
                 )
+                if (isRecordingAudio) {
+                    TextButton(
+                        onClick = {
+                            viewModel.stopAudioRecordingAndTranscribe { transcription ->
+                                textInput = transcription
+                            }
+                        },
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                        modifier = Modifier.height(26.dp)
+                    ) {
+                        Text(
+                            text = "Listo ⏹",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
             }
         }
 
@@ -861,28 +915,48 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
                 })
             )
 
-            // STT Microphone button
+            // STT Microphone button (Real Voice Recording & Whisper Transcription)
             IconButton(
                 onClick = {
-                    viewModel.triggerMicrophoneTranscription { transcription ->
-                        textInput = transcription
+                    if (isRecordingAudio) {
+                        viewModel.stopAudioRecordingAndTranscribe { transcription ->
+                            textInput = transcription
+                        }
+                    } else if (!hasMicPermission) {
+                        micPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+                    } else {
+                        viewModel.startAudioRecording()
                     }
                 },
-                enabled = !isRecordingAudio,
+                enabled = !isTranscribingAudio,
                 modifier = Modifier
                     .size(36.dp)
                     .clip(CircleShape)
                     .background(
-                        if (isRecordingAudio) MaterialTheme.colorScheme.error.copy(alpha = 0.15f)
+                        if (isRecordingAudio) MaterialTheme.colorScheme.error.copy(alpha = 0.2f)
+                        else if (isTranscribingAudio) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
                         else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
                     )
                     .testTag("chat_stt_microphone")
             ) {
-                Text(
-                    text = "🎙️",
-                    fontSize = 15.sp,
-                    color = if (isRecordingAudio) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                if (isRecordingAudio) {
+                    Text(
+                        text = "⏹️",
+                        fontSize = 14.sp
+                    )
+                } else if (isTranscribingAudio) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                } else {
+                    Text(
+                        text = "🎙️",
+                        fontSize = 15.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
 
             // Send button
@@ -1767,7 +1841,8 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
                             Card(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(vertical = 4.dp),
+                                    .padding(vertical = 4.dp)
+                                    .clickable { viewModel.selectActiveLlmProfile(profile.id) },
                                 colors = CardDefaults.cardColors(
                                     containerColor = if (isActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.05f)
                                                      else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)
@@ -1830,7 +1905,7 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
                                                 onClick = {
                                                     testingLlmId = profile.id
                                                     viewModel.testLlmConnection(profile.provider, profile.apiEndpoint, profile.apiKey, profile.modelName) { ok, msg ->
-                                                        llmTestStatuses = llmTestStatuses + (profile.id to if (ok) "✓ Conexión OK" else "✕ $msg")
+                                                        llmTestStatuses = llmTestStatuses + (profile.id to msg)
                                                         testingLlmId = null
                                                     }
                                                 },
@@ -1939,7 +2014,7 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
                                                 )
                                                 Spacer(modifier = Modifier.width(6.dp))
                                                 Text(
-                                                    text = testMsg,
+                                                    text = testMsg.removePrefix("✓").removePrefix("✕").trim(),
                                                     fontSize = 10.sp,
                                                     fontWeight = FontWeight.SemiBold,
                                                     color = if (isOk) Color(0xFF059669) else MaterialTheme.colorScheme.error,
@@ -2192,7 +2267,8 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
                             Card(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(vertical = 4.dp),
+                                    .padding(vertical = 4.dp)
+                                    .clickable { viewModel.selectActiveSttProfile(profile.id) },
                                 colors = CardDefaults.cardColors(
                                     containerColor = if (isActive) MaterialTheme.colorScheme.secondary.copy(alpha = 0.05f)
                                                      else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)
@@ -2273,7 +2349,7 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
                                                 onClick = {
                                                     testingSttId = profile.id
                                                     viewModel.testSttConnection(profile.isLocal, profile.apiEndpoint, profile.apiKey, profile.modelName) { ok, msg ->
-                                                        sttTestStatuses = sttTestStatuses + (profile.id to if (ok) "✓ Conexión OK" else "✕ $msg")
+                                                        sttTestStatuses = sttTestStatuses + (profile.id to msg)
                                                         testingSttId = null
                                                     }
                                                 },
@@ -2379,7 +2455,7 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
                                                 )
                                                 Spacer(modifier = Modifier.width(6.dp))
                                                 Text(
-                                                    text = testMsg,
+                                                    text = testMsg.removePrefix("✓").removePrefix("✕").trim(),
                                                     fontSize = 10.sp,
                                                     fontWeight = FontWeight.SemiBold,
                                                     color = if (isOk) Color(0xFF059669) else MaterialTheme.colorScheme.error,

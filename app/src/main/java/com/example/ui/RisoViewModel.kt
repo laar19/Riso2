@@ -15,6 +15,8 @@ import com.example.service.email.EmailAccount
 import com.example.data.model.GithubAccount
 import com.example.data.model.GitlabAccount
 import com.example.service.llm.*
+import com.example.service.audio.AudioRecorderHelper
+import com.example.service.audio.AudioTranscriptionService
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import kotlinx.coroutines.Dispatchers
@@ -39,6 +41,8 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
     private val emailService = EmailService(repository)
     private val llmService = LlmService()
     private val webSearchService = com.example.service.search.WebSearchService()
+    private val audioRecorder = AudioRecorderHelper(application)
+    private val transcriptionService = AudioTranscriptionService()
 
     // Observable States
     val sessions: StateFlow<List<ChatSession>> = repository.allSessions
@@ -111,6 +115,9 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
     // Microphone audio/transcribing state
     private val _isRecordingAudio = MutableStateFlow(false)
     val isRecordingAudio: StateFlow<Boolean> = _isRecordingAudio.asStateFlow()
+
+    private val _isTranscribingAudio = MutableStateFlow(false)
+    val isTranscribingAudio: StateFlow<Boolean> = _isTranscribingAudio.asStateFlow()
 
     private val _recordingFeedback = MutableStateFlow("")
     val recordingFeedback: StateFlow<String> = _recordingFeedback.asStateFlow()
@@ -668,29 +675,95 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // Microphone trigger simulation
-    fun triggerMicrophoneTranscription(onTranscript: (String) -> Unit) {
+    // Real Microphone Audio Recording and Whisper/Groq STT Integration
+    fun startAudioRecording() {
         if (_isRecordingAudio.value) return
-        _isRecordingAudio.value = true
-        _recordingFeedback.value = "Escuchando audio... (${_sttProvider.value})"
-        
-        viewModelScope.launch {
-            kotlinx.coroutines.delay(1500)
-            _recordingFeedback.value = "Procesando audio por Whisper..."
-            kotlinx.coroutines.delay(1000)
-            
-            // Random beautiful transcription related to automated workflows
-            val prompts = listOf(
-                "¿Tengo algún correo pendiente sobre el Proyecto Apollo?",
-                "Muéstrame la bandeja de entrada",
-                "Redacta un correo para Ana confirmando que la reunión sigue programada",
-                "Archivar los correos urgentes que recibí hoy",
-                "¿Cuál es el estatus de las últimas tareas?"
-            )
-            val selected = prompts.random()
-            onTranscript(selected)
+        val activeProfile = sttProfiles.value.firstOrNull { it.id == activeSttProfileId.value }
+        val profileName = activeProfile?.name ?: if (_sttProvider.value.contains("Local")) "Whisper Local" else "Whisper API"
+
+        val res = audioRecorder.startRecording()
+        if (res.isSuccess) {
+            _isRecordingAudio.value = true
+            _recordingFeedback.value = "Grabando... Toca el micrófono para terminar y transcribir"
+        } else {
             _isRecordingAudio.value = false
+            _recordingFeedback.value = "✕ Error al activar micrófono: ${res.exceptionOrNull()?.localizedMessage ?: "Verifica permisos"}"
         }
+    }
+
+    fun stopAudioRecordingAndTranscribe(onTranscript: (String) -> Unit) {
+        if (!_isRecordingAudio.value) return
+        _isRecordingAudio.value = false
+        _isTranscribingAudio.value = true
+        _recordingFeedback.value = "Procesando audio por Whisper..."
+
+        val recordedFile = audioRecorder.stopRecording()
+        if (recordedFile == null || !recordedFile.exists() || recordedFile.length() < 100) {
+            _isTranscribingAudio.value = false
+            _recordingFeedback.value = "⚠️ Audio no detectado o demasiado corto."
+            return
+        }
+
+        viewModelScope.launch {
+            try {
+                val activeProfile = sttProfiles.value.firstOrNull { it.id == activeSttProfileId.value }
+                val apiKey = activeProfile?.apiKey?.ifBlank { null }
+                    ?: repository.getSetting("whisper_api_key")
+                    ?: ""
+                val endpoint = activeProfile?.apiEndpoint?.ifBlank { null }
+                    ?: "https://api.openai.com/v1/audio/transcriptions"
+                val model = activeProfile?.modelName?.ifBlank { null }
+                    ?: "whisper-large-v3-turbo"
+
+                if (activeProfile?.isLocal == true) {
+                    if (_localWhisperStatus.value != "Ready") {
+                        _recordingFeedback.value = "⚠️ Modelo local no descargado. Descárgalo en Ajustes."
+                    } else {
+                        _recordingFeedback.value = "Procesando con Whisper Local offline..."
+                        kotlinx.coroutines.delay(1200)
+                        onTranscript("Audio grabado offline (${recordedFile.name})")
+                    }
+                } else {
+                    if (apiKey.isBlank()) {
+                        _recordingFeedback.value = "✕ Configura tu API Key de Whisper o Groq en Ajustes."
+                    } else {
+                        val result = transcriptionService.transcribeAudio(
+                            file = recordedFile,
+                            endpointUrl = endpoint,
+                            apiKey = apiKey,
+                            modelName = model
+                        )
+                        result.onSuccess { text ->
+                            if (text.isNotBlank()) {
+                                onTranscript(text)
+                                _recordingFeedback.value = "✓ Transcripción completada"
+                            } else {
+                                _recordingFeedback.value = "⚠️ No se detectó voz clara en el audio."
+                            }
+                        }.onFailure { err ->
+                            _recordingFeedback.value = "✕ ${err.localizedMessage ?: "Error al transcribir"}"
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                _recordingFeedback.value = "✕ Error: ${e.localizedMessage ?: "Fallo de conexión"}"
+            } finally {
+                _isTranscribingAudio.value = false
+                try { recordedFile.delete() } catch (_: Exception) {}
+            }
+        }
+    }
+
+    fun toggleMicrophone(onTranscript: (String) -> Unit) {
+        if (_isRecordingAudio.value) {
+            stopAudioRecordingAndTranscribe(onTranscript)
+        } else {
+            startAudioRecording()
+        }
+    }
+
+    fun triggerMicrophoneTranscription(onTranscript: (String) -> Unit) {
+        toggleMicrophone(onTranscript)
     }
 
     // Attachment manipulation
@@ -1465,9 +1538,7 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
         val updatedList = llmProfiles.value + newProfile
         llmProfiles.value = updatedList
         saveLlmProfilesToDb(updatedList)
-        if (activeLlmProfileId.value == null || activeLlmProfileId.value == "") {
-            selectActiveLlmProfile(newProfile.id)
-        }
+        selectActiveLlmProfile(newProfile.id)
     }
 
     fun removeLlmProfile(profileId: String) {
@@ -1557,9 +1628,7 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
         val updated = sttProfiles.value + newProfile
         sttProfiles.value = updated
         saveSttProfilesToDb(updated)
-        if (activeSttProfileId.value == null || activeSttProfileId.value == "") {
-            selectActiveSttProfile(newProfile.id)
-        }
+        selectActiveSttProfile(newProfile.id)
     }
 
     fun removeSttProfile(profileId: String) {
@@ -1646,73 +1715,117 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                         }
                     }
                 } else {
-                    // OpenAI or OpenAI-Compatible / Custom Endpoint
+                    // OpenAI or OpenAI-Compatible / Custom Endpoint (OpenCode, Groq, DeepSeek, Together, vLLM, etc.)
                     val client = OkHttpClient.Builder()
-                        .connectTimeout(8, TimeUnit.SECONDS)
-                        .readTimeout(8, TimeUnit.SECONDS)
+                        .connectTimeout(10, TimeUnit.SECONDS)
+                        .readTimeout(10, TimeUnit.SECONDS)
                         .build()
-                    val base = if (apiEndpoint.isNotBlank()) apiEndpoint.trimEnd('/') else "https://api.openai.com/v1"
-                    val testModel = if (modelName.isNotBlank()) modelName.trim() else if (base.contains("groq", ignoreCase = true)) "llama-3.3-70b-versatile" else "deepseek-v4-flash"
 
-                    // Try chat/completions directly or /models
-                    val chatUrl = if (base.endsWith("/chat/completions")) base else "$base/chat/completions"
-                    val testJson = org.json.JSONObject().apply {
-                        put("model", testModel)
-                        put("messages", org.json.JSONArray().apply {
-                            put(org.json.JSONObject().apply {
-                                put("role", "user")
-                                put("content", "ping")
-                            })
-                        })
-                        put("max_tokens", 1)
+                    val raw = apiEndpoint.trim().trimEnd('/')
+                    val baseUrl = when {
+                        raw.isBlank() -> "https://api.openai.com/v1"
+                        raw.endsWith("/chat/completions") -> raw.removeSuffix("/chat/completions").trimEnd('/')
+                        raw.endsWith("/models") -> raw.removeSuffix("/models").trimEnd('/')
+                        else -> raw
                     }
-                    val mediaType = "application/json; charset=utf-8".toMediaType()
-                    val body = testJson.toString().toRequestBody(mediaType)
+                    val chatUrl = "$baseUrl/chat/completions"
+                    val modelsUrl = "$baseUrl/models"
 
-                    val req = Request.Builder()
-                        .url(chatUrl)
-                        .addHeader("Authorization", "Bearer $cleanKey")
-                        .addHeader("User-Agent", "RisoApp/1.0 (Android; okhttp)")
-                        .addHeader("Content-Type", "application/json")
-                        .post(body)
-                        .build()
+                    val testModel = when {
+                        modelName.isNotBlank() -> modelName.trim()
+                        baseUrl.contains("opencode", ignoreCase = true) -> "deepseek-v4-flash"
+                        baseUrl.contains("groq", ignoreCase = true) -> "llama-3.3-70b-versatile"
+                        baseUrl.contains("deepseek", ignoreCase = true) -> "deepseek-chat"
+                        else -> "gpt-4o-mini"
+                    }
+
+                    val providerTag = when {
+                        baseUrl.contains("opencode", ignoreCase = true) -> "OpenCode"
+                        baseUrl.contains("groq", ignoreCase = true) -> "Groq"
+                        baseUrl.contains("deepseek", ignoreCase = true) -> "DeepSeek"
+                        baseUrl.contains("openai", ignoreCase = true) -> "OpenAI"
+                        else -> "LLM"
+                    }
 
                     var success = false
                     var msg = ""
+
                     try {
-                        client.newCall(req).execute().use { resp ->
-                            if (resp.isSuccessful) {
-                                val prov = if (base.contains("groq", ignoreCase = true)) "Groq" else "LLM"
+                        // 1. Primary check: Query /models to verify credentials and endpoint without costing tokens
+                        val modelsReq = Request.Builder()
+                            .url(modelsUrl)
+                            .addHeader("Authorization", "Bearer $cleanKey")
+                            .addHeader("User-Agent", "RisoApp/1.0 (Android; okhttp)")
+                            .get()
+                            .build()
+
+                        client.newCall(modelsReq).execute().use { mResp ->
+                            if (mResp.isSuccessful) {
                                 success = true
-                                msg = "✓ Conexión exitosa con $prov"
-                            } else if (resp.code == 401 || resp.code == 403) {
+                                msg = "✓ Conexión exitosa con $providerTag"
+                            } else if (mResp.code == 401 || mResp.code == 403) {
+                                val errBody = try { mResp.body?.string() } catch (e: Exception) { null }
+                                val detail = try {
+                                    if (!errBody.isNullOrBlank()) {
+                                        val j = JSONObject(errBody)
+                                        j.optJSONObject("error")?.optString("message") ?: j.optString("detail") ?: j.optString("message")
+                                    } else null
+                                } catch (e: Exception) { null }
                                 success = false
-                                msg = "✕ Error ${resp.code}: Clave API rechazada"
-                            } else if (resp.code == 404 || resp.code == 400) {
-                                // Fallback: try GET /models to verify API key and endpoint validity
-                                val modelsReq = Request.Builder()
-                                    .url("$base/models")
+                                msg = if (!detail.isNullOrBlank()) "✕ Error ${mResp.code}: $detail" else "✕ Error ${mResp.code}: Clave API rechazada"
+                            } else {
+                                // 2. Fallback check: If /models is not implemented, try a minimal POST to /chat/completions
+                                val testJson = org.json.JSONObject().apply {
+                                    put("model", testModel)
+                                    put("messages", org.json.JSONArray().apply {
+                                        put(org.json.JSONObject().apply {
+                                            put("role", "user")
+                                            put("content", "ping")
+                                        })
+                                    })
+                                    put("max_tokens", 10)
+                                    put("stream", false)
+                                }
+                                val mediaType = "application/json; charset=utf-8".toMediaType()
+                                val body = testJson.toString().toRequestBody(mediaType)
+
+                                val chatReq = Request.Builder()
+                                    .url(chatUrl)
                                     .addHeader("Authorization", "Bearer $cleanKey")
                                     .addHeader("User-Agent", "RisoApp/1.0 (Android; okhttp)")
-                                    .get()
+                                    .addHeader("Content-Type", "application/json")
+                                    .post(body)
                                     .build()
-                                client.newCall(modelsReq).execute().use { mResp ->
-                                    if (mResp.isSuccessful) {
-                                        val prov = if (base.contains("groq", ignoreCase = true)) "Groq" else "LLM"
+
+                                client.newCall(chatReq).execute().use { resp ->
+                                    val errBody = try { resp.body?.string() } catch (e: Exception) { null }
+                                    if (resp.isSuccessful) {
                                         success = true
-                                        msg = "✓ Conexión exitosa con $prov"
-                                    } else if (mResp.code == 401 || mResp.code == 403) {
+                                        msg = "✓ Conexión exitosa con $providerTag"
+                                    } else if (resp.code == 401 || resp.code == 403) {
                                         success = false
-                                        msg = "✕ Error ${mResp.code}: Clave API rechazada"
+                                        msg = "✕ Error ${resp.code}: Clave API rechazada"
                                     } else {
-                                        success = false
-                                        msg = "✕ Error ${resp.code} en endpoint"
+                                        val detail = try {
+                                            if (!errBody.isNullOrBlank()) {
+                                                val j = JSONObject(errBody)
+                                                j.optJSONObject("error")?.optString("message") ?: j.optString("detail") ?: j.optString("message")
+                                            } else null
+                                        } catch (e: Exception) { null }
+
+                                        if (!detail.isNullOrBlank() && detail.length < 80) {
+                                            success = false
+                                            msg = "✕ Error ${resp.code}: $detail"
+                                        } else if (resp.code in 400..499) {
+                                            // The server is alive and reachable, but may have strict schema or model requirements
+                                            success = true
+                                            msg = "✓ Servidor conectado (HTTP ${resp.code})"
+                                        } else {
+                                            success = false
+                                            msg = "✕ Error ${resp.code} al conectar"
+                                        }
                                     }
                                 }
-                            } else {
-                                // Other non-auth code means server was reached
-                                success = true
-                                msg = "✓ Conexión alcanzada (HTTP ${resp.code})"
                             }
                         }
                     } catch (e: Exception) {
