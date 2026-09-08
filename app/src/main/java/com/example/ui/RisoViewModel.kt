@@ -249,12 +249,26 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
             val activeSttId = repository.getSetting("active_stt_profile_id") ?: ""
             if (sttProfilesJson.isNotBlank()) {
                 val parsedStt = parseSttProfiles(sttProfilesJson)
-                sttProfiles.value = parsedStt
-                if (parsedStt.any { it.id == activeSttId }) {
+                // Always ensure local whisper profile is available and not lost
+                val hasLocal = parsedStt.any { it.isLocal }
+                val finalList = if (!hasLocal) {
+                    listOf(
+                        SttProfile(
+                            id = "stt_local_default",
+                            name = "Whisper Local (Offline)",
+                            isLocal = true,
+                            apiEndpoint = "",
+                            modelName = "whisper-small-v3",
+                            apiKey = ""
+                        )
+                    ) + parsedStt
+                } else parsedStt
+                sttProfiles.value = finalList
+                if (finalList.any { it.id == activeSttId }) {
                     activeSttProfileId.value = activeSttId
-                } else if (parsedStt.isNotEmpty()) {
-                    activeSttProfileId.value = parsedStt.first().id
-                    repository.saveSetting("active_stt_profile_id", parsedStt.first().id)
+                } else if (finalList.isNotEmpty()) {
+                    activeSttProfileId.value = finalList.first().id
+                    repository.saveSetting("active_stt_profile_id", finalList.first().id)
                 }
             } else {
                 val initStt = mutableListOf<SttProfile>()
@@ -672,6 +686,14 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
             }
             _localWhisperStatus.value = "Ready"
             repository.saveSetting("whisper_local_status", "Ready")
+        }
+    }
+
+    fun deleteLocalWhisper() {
+        viewModelScope.launch {
+            _localWhisperStatus.value = "Not Downloaded"
+            _localWhisperProgress.value = 0f
+            repository.saveSetting("whisper_local_status", "Not Downloaded")
         }
     }
 
@@ -1632,6 +1654,9 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun removeSttProfile(profileId: String) {
+        val target = sttProfiles.value.find { it.id == profileId }
+        // User requested: local whisper cannot be permanently deleted, only downloaded model can be removed
+        if (target?.isLocal == true) return
         val updated = sttProfiles.value.filter { it.id != profileId }
         sttProfiles.value = updated
         saveSttProfilesToDb(updated)
@@ -1640,9 +1665,9 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
             if (next != null) {
                 selectActiveSttProfile(next.id)
             } else {
-                activeSttProfileId.value = null
+                activeSttProfileId.value = "stt_local_default"
                 viewModelScope.launch {
-                    repository.saveSetting("active_stt_profile_id", "")
+                    repository.saveSetting("active_stt_profile_id", "stt_local_default")
                 }
             }
         }
@@ -1751,80 +1776,86 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                     var msg = ""
 
                     try {
-                        // 1. Primary check: Query /models to verify credentials and endpoint without costing tokens
-                        val modelsReq = Request.Builder()
-                            .url(modelsUrl)
+                        // 1. Primary check: Verify actual chat completion with the specified model and user's key
+                        val testJson = org.json.JSONObject().apply {
+                            put("model", testModel)
+                            put("messages", org.json.JSONArray().apply {
+                                put(org.json.JSONObject().apply {
+                                    put("role", "user")
+                                    put("content", "ping")
+                                })
+                            })
+                            put("max_tokens", 5)
+                            put("stream", false)
+                        }
+                        val mediaType = "application/json; charset=utf-8".toMediaType()
+                        val body = testJson.toString().toRequestBody(mediaType)
+
+                        val chatReq = Request.Builder()
+                            .url(chatUrl)
                             .addHeader("Authorization", "Bearer $cleanKey")
                             .addHeader("User-Agent", "RisoApp/1.0 (Android; okhttp)")
-                            .get()
+                            .addHeader("Content-Type", "application/json")
+                            .post(body)
                             .build()
 
-                        client.newCall(modelsReq).execute().use { mResp ->
-                            if (mResp.isSuccessful) {
+                        client.newCall(chatReq).execute().use { resp ->
+                            val respBody = try { resp.body?.string() } catch (e: Exception) { null }
+                            if (resp.isSuccessful) {
                                 success = true
-                                msg = "✓ Conexión exitosa con $providerTag"
-                            } else if (mResp.code == 401 || mResp.code == 403) {
-                                val errBody = try { mResp.body?.string() } catch (e: Exception) { null }
+                                msg = "✓ Conexión exitosa ($providerTag: $testModel)"
+                            } else {
                                 val detail = try {
-                                    if (!errBody.isNullOrBlank()) {
-                                        val j = JSONObject(errBody)
-                                        j.optJSONObject("error")?.optString("message") ?: j.optString("detail") ?: j.optString("message")
+                                    if (!respBody.isNullOrBlank()) {
+                                        val j = JSONObject(respBody)
+                                        j.optJSONObject("error")?.optString("message")
+                                            ?: j.optString("detail")
+                                            ?: j.optString("message")
+                                            ?: j.optString("error")
                                     } else null
                                 } catch (e: Exception) { null }
-                                success = false
-                                msg = if (!detail.isNullOrBlank()) "✕ Error ${mResp.code}: $detail" else "✕ Error ${mResp.code}: Clave API rechazada"
-                            } else {
-                                // 2. Fallback check: If /models is not implemented, try a minimal POST to /chat/completions
-                                val testJson = org.json.JSONObject().apply {
-                                    put("model", testModel)
-                                    put("messages", org.json.JSONArray().apply {
-                                        put(org.json.JSONObject().apply {
-                                            put("role", "user")
-                                            put("content", "ping")
-                                        })
-                                    })
-                                    put("max_tokens", 10)
-                                    put("stream", false)
-                                }
-                                val mediaType = "application/json; charset=utf-8".toMediaType()
-                                val body = testJson.toString().toRequestBody(mediaType)
 
-                                val chatReq = Request.Builder()
-                                    .url(chatUrl)
-                                    .addHeader("Authorization", "Bearer $cleanKey")
-                                    .addHeader("User-Agent", "RisoApp/1.0 (Android; okhttp)")
-                                    .addHeader("Content-Type", "application/json")
-                                    .post(body)
-                                    .build()
-
-                                client.newCall(chatReq).execute().use { resp ->
-                                    val errBody = try { resp.body?.string() } catch (e: Exception) { null }
-                                    if (resp.isSuccessful) {
-                                        success = true
-                                        msg = "✓ Conexión exitosa con $providerTag"
-                                    } else if (resp.code == 401 || resp.code == 403) {
+                                val cleanDetail = detail?.take(120)?.trim()
+                                if (resp.code == 401 || resp.code == 403) {
+                                    success = false
+                                    msg = when {
+                                        cleanDetail?.contains("not supported", ignoreCase = true) == true ->
+                                            "✕ Error ${resp.code}: Modelo '$testModel' no soportado por tu cuenta OpenCode/servidor"
+                                        !cleanDetail.isNullOrBlank() ->
+                                            "✕ Error ${resp.code}: $cleanDetail"
+                                        else ->
+                                            "✕ Error ${resp.code}: Clave de API rechazada"
+                                    }
+                                } else if (resp.code == 400) {
+                                    if (cleanDetail?.contains("not supported", ignoreCase = true) == true || cleanDetail?.contains("model", ignoreCase = true) == true) {
                                         success = false
-                                        msg = "✕ Error ${resp.code}: Clave API rechazada"
+                                        msg = "✕ Error 400: $cleanDetail"
                                     } else {
-                                        val detail = try {
-                                            if (!errBody.isNullOrBlank()) {
-                                                val j = JSONObject(errBody)
-                                                j.optJSONObject("error")?.optString("message") ?: j.optString("detail") ?: j.optString("message")
-                                            } else null
-                                        } catch (e: Exception) { null }
+                                        // Some strict APIs complain about test params, but connection/auth succeeded
+                                        success = true
+                                        msg = "✓ Conexión válida ($providerTag)"
+                                    }
+                                } else if (resp.code == 404) {
+                                    // 2. Fallback check: If endpoint does not have /chat/completions directly, query /models
+                                    val modelsReq = Request.Builder()
+                                        .url(modelsUrl)
+                                        .addHeader("Authorization", "Bearer $cleanKey")
+                                        .addHeader("User-Agent", "RisoApp/1.0 (Android; okhttp)")
+                                        .get()
+                                        .build()
 
-                                        if (!detail.isNullOrBlank() && detail.length < 80) {
-                                            success = false
-                                            msg = "✕ Error ${resp.code}: $detail"
-                                        } else if (resp.code in 400..499) {
-                                            // The server is alive and reachable, but may have strict schema or model requirements
+                                    client.newCall(modelsReq).execute().use { mResp ->
+                                        if (mResp.isSuccessful) {
                                             success = true
-                                            msg = "✓ Servidor conectado (HTTP ${resp.code})"
+                                            msg = "✓ Servidor conectado ($providerTag)"
                                         } else {
                                             success = false
-                                            msg = "✕ Error ${resp.code} al conectar"
+                                            msg = "✕ Error 404: Endpoint no encontrado ($chatUrl)"
                                         }
                                     }
+                                } else {
+                                    success = false
+                                    msg = if (!cleanDetail.isNullOrBlank()) "✕ Error ${resp.code}: $cleanDetail" else "✕ Error ${resp.code} al conectar"
                                 }
                             }
                         }
@@ -1974,8 +2005,33 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
             gitlabAccounts.value = emptyList()
             llmProfiles.value = emptyList()
             activeLlmProfileId.value = null
-            sttProfiles.value = emptyList()
-            activeSttProfileId.value = null
+            
+            // Clean STT with permanent local whisper option ready
+            val initStt = listOf(
+                SttProfile(
+                    id = "stt_local_default",
+                    name = "Whisper Local (Offline)",
+                    isLocal = true,
+                    apiEndpoint = "",
+                    modelName = "whisper-small-v3",
+                    apiKey = ""
+                )
+            )
+            sttProfiles.value = initStt
+            activeSttProfileId.value = "stt_local_default"
+            _localWhisperStatus.value = "Not Downloaded"
+            _localWhisperProgress.value = 0f
+            _recordingFeedback.value = ""
+            
+            // Clean audio recordings in cache
+            try {
+                getApplication<Application>().cacheDir.listFiles()?.forEach { file: java.io.File ->
+                    if (file.name.endsWith(".m4a") || file.name.endsWith(".aac") || file.name.endsWith(".wav")) {
+                        file.delete()
+                    }
+                }
+            } catch (_: Exception) {}
+
             _liveInbox.value = emptyList()
             createNewSession()
             onFinished()

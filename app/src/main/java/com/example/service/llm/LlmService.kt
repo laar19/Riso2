@@ -566,8 +566,17 @@ class LlmService {
                     errMsg = respString.take(250)
                 }
             }
+
+            val suggestion = when {
+                errMsg.contains("not supported", ignoreCase = true) && fullUrl.contains("opencode", ignoreCase = true) ->
+                    "\n\n💡 **Guía de Solución OpenCode:**\n• En OpenCode Zen (capa gratuita), el modelo admitido es `deepseek-v4-flash-free` con endpoint `https://opencode.ai/zen/v1/chat/completions`.\n• En OpenCode Go, `deepseek-v4-flash` requiere suscripción activa.\n• Si usas DeepSeek oficial directamente, usa endpoint `https://api.deepseek.com/v1` y modelo `deepseek-chat`."
+                errMsg.contains("invalid api key", ignoreCase = true) || response.code == 401 ->
+                    "\n\n💡 **Guía:** La clave de API configurada fue rechazada o no tiene permisos para este modelo. Verifica tu clave en Ajustes."
+                else -> ""
+            }
+
             return@withContext getErrorResponse(
-                "⚠️ **Error en Proveedor LLM (HTTP ${response.code})**\n\n$errMsg\n\n**Endpoint:** $fullUrl\n**Modelo:** ${if (modelName.isNotBlank()) modelName else "default"}\n\nVerifica tu clave de API y el endpoint configurado."
+                "⚠️ **Error en Proveedor LLM (HTTP ${response.code})**\n\n$errMsg\n\n**Endpoint:** $fullUrl\n**Modelo:** ${if (modelName.isNotBlank()) modelName else "default"}$suggestion\n\nVerifica tu clave de API y el endpoint configurado."
             )
         }
 

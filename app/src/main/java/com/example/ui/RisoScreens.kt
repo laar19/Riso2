@@ -6,6 +6,15 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.composed
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.unit.Dp
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -55,6 +64,47 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import android.net.Uri
 import android.graphics.Bitmap
+
+fun Modifier.simpleVerticalScrollbar(
+    state: LazyListState,
+    width: Dp = 4.dp
+): Modifier = composed {
+    val targetAlpha = if (state.isScrollInProgress) 1f else 0f
+    val duration = if (state.isScrollInProgress) 150 else 500
+    val alpha by animateFloatAsState(
+        targetValue = targetAlpha,
+        animationSpec = tween(durationMillis = duration),
+        label = "scrollbar_alpha"
+    )
+    val barColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
+
+    drawWithContent {
+        drawContent()
+
+        val firstVisibleElementIndex = state.layoutInfo.visibleItemsInfo.firstOrNull()?.index
+        val needDrawScrollbar = state.isScrollInProgress || alpha > 0.0f
+
+        if (needDrawScrollbar && firstVisibleElementIndex != null) {
+            val elementHeights = state.layoutInfo.visibleItemsInfo.firstOrNull()?.size ?: 0
+            val totalElements = state.layoutInfo.totalItemsCount
+            val totalHeight = totalElements * elementHeights
+            val canvasHeight = size.height
+
+            if (totalElements > 0 && totalHeight > canvasHeight && elementHeights > 0) {
+                val scrollbarHeight = (canvasHeight * (canvasHeight / totalHeight)).coerceIn(36.dp.toPx(), canvasHeight)
+                val scrollbarOffsetY = (firstVisibleElementIndex.toFloat() / totalElements.toFloat()) * canvasHeight
+
+                drawRoundRect(
+                    color = barColor,
+                    topLeft = Offset(size.width - width.toPx() - 2.dp.toPx(), scrollbarOffsetY),
+                    size = Size(width.toPx(), scrollbarHeight),
+                    cornerRadius = CornerRadius(width.toPx() / 2, width.toPx() / 2),
+                    alpha = alpha
+                )
+            }
+        }
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -1646,11 +1696,16 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
         }
     }
 
+    val settingsListState = rememberLazyListState()
+
     LazyColumn(
+        state = settingsListState,
         modifier = Modifier
             .fillMaxSize()
+            .simpleVerticalScrollbar(settingsListState)
             .padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+        contentPadding = PaddingValues(bottom = 80.dp)
     ) {
         // App settings header
         item {
@@ -2042,7 +2097,7 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
                         ) {
                             Icon(Icons.Default.Add, contentDescription = "Add", modifier = Modifier.size(14.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("+ Agregar Modelo", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            Text("Agregar Modelo", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                         }
                     } else {
                         Column(
@@ -2056,7 +2111,7 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
                             OutlinedTextField(
                                 value = newLlmName,
                                 onValueChange = { newLlmName = it },
-                                label = { Text("Nombre (ej: Gemini 3.5 Flash)", fontSize = 11.sp) },
+                                label = { Text("Nombre (ej: Gemini 2.5 Flash, DeepSeek OpenCode)", fontSize = 11.sp) },
                                 shape = RoundedCornerShape(8.dp),
                                 modifier = Modifier.fillMaxWidth().testTag("new_llm_name_input"),
                                 singleLine = true
@@ -2069,10 +2124,11 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
                                 horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
                                 listOf(
-                                    "Google" to ("https://generativelanguage.googleapis.com" to "gemini-3.5-flash"),
-                                    "Anthropic" to ("https://api.anthropic.com/v1" to "claude-3-5-sonnet-20240620"),
-                                    "OpenAI" to ("https://api.openai.com/v1" to "gpt-4o-mini"),
-                                    "Compatible" to ("https://api.openai.com/v1" to "")
+                                    "Google" to ("https://generativelanguage.googleapis.com" to "gemini-2.5-flash"),
+                                    "OpenCode" to ("https://opencode.ai/zen/go/v1" to "deepseek-v4-flash-free"),
+                                    "DeepSeek" to ("https://api.deepseek.com/v1" to "deepseek-chat"),
+                                    "Groq" to ("https://api.groq.com/openai/v1" to "llama-3.3-70b-versatile"),
+                                    "OpenAI" to ("https://api.openai.com/v1" to "gpt-4o-mini")
                                 ).forEach { (prov, defaults) ->
                                     val isSel = newLlmProvider == prov
                                     Card(
@@ -2087,6 +2143,7 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
                                                 newLlmProvider = prov
                                                 newLlmEndpoint = defaults.first
                                                 if (defaults.second.isNotBlank()) newLlmModel = defaults.second
+                                                if (newLlmName.isBlank()) newLlmName = "$prov ${defaults.second}"
                                             },
                                         shape = RoundedCornerShape(6.dp)
                                     ) {
@@ -2094,7 +2151,7 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
                                             modifier = Modifier.padding(vertical = 6.dp).fillMaxWidth(),
                                             contentAlignment = Alignment.Center
                                         ) {
-                                            Text(prov, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                            Text(prov, fontSize = 8.5.sp, fontWeight = FontWeight.Bold, maxLines = 1)
                                         }
                                     }
                                 }
@@ -2326,22 +2383,39 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
                                             verticalAlignment = Alignment.CenterVertically,
                                             horizontalArrangement = Arrangement.spacedBy(4.dp)
                                         ) {
-                                            if (profile.isLocal && whisperStatus != "Ready") {
-                                                Button(
-                                                    onClick = { viewModel.downloadLocalWhisper() },
-                                                    enabled = whisperStatus != "Downloading",
-                                                    modifier = Modifier.height(28.dp),
-                                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                                                    shape = RoundedCornerShape(6.dp),
-                                                    colors = ButtonDefaults.buttonColors(
-                                                        containerColor = MaterialTheme.colorScheme.tertiary
-                                                    )
-                                                ) {
-                                                    Text(
-                                                        text = if (whisperStatus == "Downloading") "${whisperProgress}%" else "Descargar",
-                                                        fontSize = 10.sp,
-                                                        fontWeight = FontWeight.Bold
-                                                    )
+                                            if (profile.isLocal) {
+                                                if (whisperStatus == "Ready") {
+                                                    OutlinedButton(
+                                                        onClick = { viewModel.deleteLocalWhisper() },
+                                                        modifier = Modifier.height(28.dp),
+                                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                                                        shape = RoundedCornerShape(6.dp),
+                                                        colors = ButtonDefaults.outlinedButtonColors(
+                                                            contentColor = MaterialTheme.colorScheme.error
+                                                        ),
+                                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.35f))
+                                                    ) {
+                                                        Icon(Icons.Default.Delete, contentDescription = "Borrar", modifier = Modifier.size(11.dp))
+                                                        Spacer(modifier = Modifier.width(3.dp))
+                                                        Text("Borrar modelo", fontSize = 9.5.sp, fontWeight = FontWeight.SemiBold)
+                                                    }
+                                                } else {
+                                                    Button(
+                                                        onClick = { viewModel.downloadLocalWhisper() },
+                                                        enabled = whisperStatus != "Downloading",
+                                                        modifier = Modifier.height(28.dp),
+                                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                                                        shape = RoundedCornerShape(6.dp),
+                                                        colors = ButtonDefaults.buttonColors(
+                                                            containerColor = MaterialTheme.colorScheme.tertiary
+                                                        )
+                                                    ) {
+                                                        Text(
+                                                            text = if (whisperStatus == "Downloading") "${whisperProgress}%" else "Descargar",
+                                                            fontSize = 10.sp,
+                                                            fontWeight = FontWeight.Bold
+                                                        )
+                                                    }
                                                 }
                                             }
 
@@ -2370,16 +2444,18 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
                                                 }
                                             }
 
-                                            IconButton(
-                                                onClick = { viewModel.removeSttProfile(profile.id) },
-                                                modifier = Modifier.size(28.dp)
-                                            ) {
-                                                Icon(
-                                                    Icons.Default.Delete,
-                                                    contentDescription = "Borrar",
-                                                    tint = MaterialTheme.colorScheme.error.copy(alpha = 0.65f),
-                                                    modifier = Modifier.size(15.dp)
-                                                )
+                                            if (!profile.isLocal) {
+                                                IconButton(
+                                                    onClick = { viewModel.removeSttProfile(profile.id) },
+                                                    modifier = Modifier.size(28.dp)
+                                                ) {
+                                                    Icon(
+                                                        Icons.Default.Delete,
+                                                        contentDescription = "Borrar",
+                                                        tint = MaterialTheme.colorScheme.error.copy(alpha = 0.65f),
+                                                        modifier = Modifier.size(15.dp)
+                                                    )
+                                                }
                                             }
                                         }
                                     }
@@ -2474,7 +2550,15 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
 
                     if (!showAddSttForm) {
                         OutlinedButton(
-                            onClick = { showAddSttForm = true },
+                            onClick = {
+                                newSttName = ""
+                                newSttEndpoint = "https://api.groq.com/openai/v1/audio/transcriptions"
+                                newSttModel = "whisper-large-v3-turbo"
+                                newSttKey = ""
+                                newSttTestMsg = null
+                                newSttIsLocal = false
+                                showAddSttForm = true
+                            },
                             shape = RoundedCornerShape(8.dp),
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -2483,7 +2567,7 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
                         ) {
                             Icon(Icons.Default.Add, contentDescription = "Add", modifier = Modifier.size(14.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("+ Agregar STT", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            Text("Agregar STT Remoto", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                         }
                     } else {
                         Column(
@@ -2492,87 +2576,76 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
                                 .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.03f), RoundedCornerShape(10.dp))
                                 .padding(10.dp)
                         ) {
-                            Text("Nuevo Perfil STT", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
+                            Text("Nuevo STT Remoto (Whisper / Groq / OpenAI)", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
 
                             OutlinedTextField(
                                 value = newSttName,
                                 onValueChange = { newSttName = it },
-                                label = { Text("Nombre (ej: Whisper Remoto)", fontSize = 11.sp) },
+                                label = { Text("Nombre (ej: Groq Whisper, OpenAI Whisper)", fontSize = 11.sp) },
                                 shape = RoundedCornerShape(8.dp),
                                 modifier = Modifier.fillMaxWidth().testTag("new_stt_name_input"),
                                 singleLine = true
                             )
 
-                            // Type selector: Remoto vs Local
-                            Text("Tipo de STT:", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                            // Quick provider defaults
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 listOf(
-                                    "Remoto (API)" to false,
-                                    "Local (Offline)" to true
-                                ).forEach { (label, isLoc) ->
-                                    val isSel = newSttIsLocal == isLoc
+                                    "Groq" to ("https://api.groq.com/openai/v1/audio/transcriptions" to "whisper-large-v3-turbo"),
+                                    "OpenAI" to ("https://api.openai.com/v1/audio/transcriptions" to "whisper-1")
+                                ).forEach { (label, defs) ->
                                     Card(
                                         colors = CardDefaults.cardColors(
-                                            containerColor = if (isSel) MaterialTheme.colorScheme.secondary.copy(alpha = 0.12f)
-                                                             else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                                            containerColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.08f)
                                         ),
-                                        border = if (isSel) BorderStroke(1.dp, MaterialTheme.colorScheme.secondary) else null,
                                         modifier = Modifier
                                             .weight(1f)
-                                            .clickable { newSttIsLocal = isLoc },
+                                            .clickable {
+                                                if (newSttName.isBlank()) newSttName = "$label Whisper"
+                                                newSttEndpoint = defs.first
+                                                newSttModel = defs.second
+                                            },
                                         shape = RoundedCornerShape(6.dp)
                                     ) {
                                         Box(
-                                            modifier = Modifier.padding(vertical = 6.dp).fillMaxWidth(),
+                                            modifier = Modifier.padding(vertical = 5.dp).fillMaxWidth(),
                                             contentAlignment = Alignment.Center
                                         ) {
-                                            Text(label, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                            Text(label, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.secondary)
                                         }
                                     }
                                 }
                             }
 
-                            if (!newSttIsLocal) {
-                                OutlinedTextField(
-                                    value = newSttEndpoint,
-                                    onValueChange = { newSttEndpoint = it },
-                                    label = { Text("API Endpoint", fontSize = 11.sp) },
-                                    shape = RoundedCornerShape(8.dp),
-                                    modifier = Modifier.fillMaxWidth().testTag("new_stt_endpoint_input"),
-                                    singleLine = true
-                                )
+                            OutlinedTextField(
+                                value = newSttEndpoint,
+                                onValueChange = { newSttEndpoint = it },
+                                label = { Text("API Endpoint", fontSize = 11.sp) },
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.fillMaxWidth().testTag("new_stt_endpoint_input"),
+                                singleLine = true
+                            )
 
-                                OutlinedTextField(
-                                    value = newSttModel,
-                                    onValueChange = { newSttModel = it },
-                                    label = { Text("Nombre del Modelo (ej: whisper-1)", fontSize = 11.sp) },
-                                    shape = RoundedCornerShape(8.dp),
-                                    modifier = Modifier.fillMaxWidth().testTag("new_stt_model_input"),
-                                    singleLine = true
-                                )
+                            OutlinedTextField(
+                                value = newSttModel,
+                                onValueChange = { newSttModel = it },
+                                label = { Text("Nombre del Modelo (ej: whisper-large-v3-turbo)", fontSize = 11.sp) },
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.fillMaxWidth().testTag("new_stt_model_input"),
+                                singleLine = true
+                            )
 
-                                OutlinedTextField(
-                                    value = newSttKey,
-                                    onValueChange = { newSttKey = it },
-                                    label = { Text("API Key", fontSize = 11.sp) },
-                                    shape = RoundedCornerShape(8.dp),
-                                    modifier = Modifier.fillMaxWidth().testTag("new_stt_key_input"),
-                                    singleLine = true,
-                                    visualTransformation = PasswordVisualTransformation()
-                                )
-                            } else {
-                                OutlinedTextField(
-                                    value = newSttModel,
-                                    onValueChange = { newSttModel = it },
-                                    label = { Text("Nombre del Modelo Local (ej: whisper-small-v3)", fontSize = 11.sp) },
-                                    shape = RoundedCornerShape(8.dp),
-                                    modifier = Modifier.fillMaxWidth().testTag("new_stt_model_input"),
-                                    singleLine = true
-                                )
-                            }
+                            OutlinedTextField(
+                                value = newSttKey,
+                                onValueChange = { newSttKey = it },
+                                label = { Text("API Key (ej: gsk_... o sk-...)", fontSize = 11.sp) },
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.fillMaxWidth().testTag("new_stt_key_input"),
+                                singleLine = true,
+                                visualTransformation = PasswordVisualTransformation()
+                            )
 
                             if (newSttTestMsg != null) {
                                 val isOk = newSttTestMsg!!.startsWith("✓")
@@ -2599,7 +2672,7 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
                                 Button(
                                     onClick = {
                                         isTestingNewStt = true
-                                        viewModel.testSttConnection(newSttIsLocal, newSttEndpoint, newSttKey, newSttModel) { ok, msg ->
+                                        viewModel.testSttConnection(false, newSttEndpoint, newSttKey, newSttModel) { ok, msg ->
                                             newSttTestMsg = msg
                                             isTestingNewStt = false
                                         }
@@ -2636,20 +2709,23 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
 
                                 Button(
                                     onClick = {
-                                        if (newSttName.isNotBlank() && (newSttIsLocal || newSttKey.isNotBlank())) {
+                                        if (newSttName.isNotBlank() && newSttKey.isNotBlank()) {
                                             viewModel.addSttProfile(
                                                 name = newSttName,
-                                                isLocal = newSttIsLocal,
+                                                isLocal = false,
                                                 apiEndpoint = newSttEndpoint,
                                                 modelName = newSttModel,
                                                 apiKey = newSttKey
                                             )
+                                            showAddSttForm = false
                                             newSttName = ""
+                                            newSttEndpoint = ""
+                                            newSttModel = "whisper-large-v3-turbo"
                                             newSttKey = ""
                                             newSttTestMsg = null
-                                            showAddSttForm = false
                                         }
                                     },
+                                    enabled = newSttName.isNotBlank() && newSttKey.isNotBlank(),
                                     shape = RoundedCornerShape(6.dp),
                                     modifier = Modifier
                                         .weight(1f)
