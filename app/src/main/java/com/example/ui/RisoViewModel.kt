@@ -23,6 +23,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.MultipartBody
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
@@ -1651,7 +1652,7 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                         .readTimeout(8, TimeUnit.SECONDS)
                         .build()
                     val base = if (apiEndpoint.isNotBlank()) apiEndpoint.trimEnd('/') else "https://api.openai.com/v1"
-                    val testModel = if (modelName.isNotBlank()) modelName.trim() else "deepseek-v4-flash"
+                    val testModel = if (modelName.isNotBlank()) modelName.trim() else if (base.contains("groq", ignoreCase = true)) "llama-3.3-70b-versatile" else "deepseek-v4-flash"
 
                     // Try chat/completions directly or /models
                     val chatUrl = if (base.endsWith("/chat/completions")) base else "$base/chat/completions"
@@ -1671,6 +1672,7 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                     val req = Request.Builder()
                         .url(chatUrl)
                         .addHeader("Authorization", "Bearer $cleanKey")
+                        .addHeader("User-Agent", "RisoApp/1.0 (Android; okhttp)")
                         .addHeader("Content-Type", "application/json")
                         .post(body)
                         .build()
@@ -1680,29 +1682,35 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                     try {
                         client.newCall(req).execute().use { resp ->
                             if (resp.isSuccessful) {
+                                val prov = if (base.contains("groq", ignoreCase = true)) "Groq" else "LLM"
                                 success = true
-                                msg = "✓ Conexión exitosa"
+                                msg = "✓ Conexión exitosa con $prov"
                             } else if (resp.code == 401 || resp.code == 403) {
                                 success = false
                                 msg = "✕ Error ${resp.code}: Clave API rechazada"
-                            } else if (resp.code == 404) {
-                                // Fallback: try GET /models
+                            } else if (resp.code == 404 || resp.code == 400) {
+                                // Fallback: try GET /models to verify API key and endpoint validity
                                 val modelsReq = Request.Builder()
                                     .url("$base/models")
                                     .addHeader("Authorization", "Bearer $cleanKey")
+                                    .addHeader("User-Agent", "RisoApp/1.0 (Android; okhttp)")
                                     .get()
                                     .build()
                                 client.newCall(modelsReq).execute().use { mResp ->
-                                    if (mResp.isSuccessful || (mResp.code !in listOf(401, 403, 404))) {
+                                    if (mResp.isSuccessful) {
+                                        val prov = if (base.contains("groq", ignoreCase = true)) "Groq" else "LLM"
                                         success = true
-                                        msg = "✓ Conexión exitosa"
+                                        msg = "✓ Conexión exitosa con $prov"
+                                    } else if (mResp.code == 401 || mResp.code == 403) {
+                                        success = false
+                                        msg = "✕ Error ${mResp.code}: Clave API rechazada"
                                     } else {
                                         success = false
                                         msg = "✕ Error ${resp.code} en endpoint"
                                     }
                                 }
                             } else {
-                                // 400 or other non-auth code often means valid API reached with model/param nuance
+                                // Other non-auth code means server was reached
                                 success = true
                                 msg = "✓ Conexión alcanzada (HTTP ${resp.code})"
                             }
@@ -1743,28 +1751,92 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                         }
                     }
                 } else {
-                    if (apiKey.isBlank()) {
+                    val cleanKey = apiKey.trim()
+                    if (cleanKey.isBlank()) {
                         withContext(Dispatchers.Main) {
-                            onResult(false, "API Key requerida")
+                            onResult(false, "✕ Clave API requerida")
                         }
                         return@launch
                     }
+
                     val client = OkHttpClient.Builder()
-                        .connectTimeout(6, TimeUnit.SECONDS)
-                        .readTimeout(6, TimeUnit.SECONDS)
+                        .connectTimeout(8, TimeUnit.SECONDS)
+                        .readTimeout(8, TimeUnit.SECONDS)
                         .build()
-                    val targetUrl = if (apiEndpoint.isNotBlank()) apiEndpoint else "https://api.openai.com/v1/audio/transcriptions"
-                    val request = Request.Builder()
-                        .url(targetUrl)
-                        .addHeader("Authorization", "Bearer ${apiKey.trim()}")
-                        .get()
-                        .build()
-                    client.newCall(request).execute().use { response ->
-                        val reachable = response.code != 404 && response.code != 401 && response.code != 403
-                        val msg = if (reachable) "✓ Endpoint accesible" else "✕ Error ${response.code} (revisa API Key/URL)"
-                        withContext(Dispatchers.Main) {
-                            onResult(reachable, msg)
+
+                    val rawEndpoint = apiEndpoint.trim().trimEnd('/')
+                    val baseUrl = when {
+                        rawEndpoint.isBlank() -> "https://api.openai.com/v1"
+                        rawEndpoint.endsWith("/audio/transcriptions") -> rawEndpoint.removeSuffix("/audio/transcriptions").trimEnd('/')
+                        rawEndpoint.endsWith("/models") -> rawEndpoint.removeSuffix("/models").trimEnd('/')
+                        else -> rawEndpoint
+                    }
+
+                    val modelsUrl = "$baseUrl/models"
+                    val transcriptionsUrl = "$baseUrl/audio/transcriptions"
+
+                    var success = false
+                    var msg = ""
+
+                    try {
+                        // 1. Primary check: Query /models to verify credentials and connectivity (standard in Groq, OpenAI, etc.)
+                        val modelsReq = Request.Builder()
+                            .url(modelsUrl)
+                            .addHeader("Authorization", "Bearer $cleanKey")
+                            .addHeader("User-Agent", "RisoApp/1.0 (Android; okhttp)")
+                            .get()
+                            .build()
+
+                        client.newCall(modelsReq).execute().use { mResp ->
+                            if (mResp.isSuccessful) {
+                                val providerTag = if (baseUrl.contains("groq", ignoreCase = true)) "Groq Whisper" else "Whisper Remoto"
+                                success = true
+                                msg = "✓ Conexión exitosa con $providerTag"
+                            } else if (mResp.code == 401 || mResp.code == 403) {
+                                val errBody = try { mResp.body?.string() } catch (e: Exception) { null }
+                                val detail = try {
+                                    if (!errBody.isNullOrBlank()) JSONObject(errBody).optJSONObject("error")?.optString("message") else null
+                                } catch (e: Exception) { null }
+                                success = false
+                                msg = if (!detail.isNullOrBlank()) "✕ Error ${mResp.code}: $detail" else "✕ Error ${mResp.code}: Clave API rechazada"
+                            } else {
+                                // 2. Fallback check: If /models is 404 (custom private Whisper server), test audio/transcriptions directly
+                                val dummyBody = MultipartBody.Builder()
+                                    .setType(MultipartBody.FORM)
+                                    .addFormDataPart("model", if (modelName.isNotBlank()) modelName.trim() else "whisper-large-v3-turbo")
+                                    .build()
+
+                                val sttReq = Request.Builder()
+                                    .url(transcriptionsUrl)
+                                    .addHeader("Authorization", "Bearer $cleanKey")
+                                    .addHeader("User-Agent", "RisoApp/1.0 (Android; okhttp)")
+                                    .post(dummyBody)
+                                    .build()
+
+                                client.newCall(sttReq).execute().use { sResp ->
+                                    if (sResp.isSuccessful || sResp.code == 400 || (sResp.code in 402..405 && sResp.code != 403)) {
+                                        success = true
+                                        msg = "✓ Endpoint STT conectado"
+                                    } else if (sResp.code == 401 || sResp.code == 403) {
+                                        success = false
+                                        msg = "✕ Error ${sResp.code}: Clave API inválida"
+                                    } else if (sResp.code == 404) {
+                                        success = false
+                                        msg = "✕ Error 404: Endpoint no encontrado ($transcriptionsUrl)"
+                                    } else {
+                                        success = false
+                                        msg = "✕ Error ${sResp.code} al conectar"
+                                    }
+                                }
+                            }
                         }
+                    } catch (e: Exception) {
+                        success = false
+                        msg = "✕ Error: ${e.localizedMessage ?: "No se pudo conectar"}"
+                    }
+
+                    withContext(Dispatchers.Main) {
+                        onResult(success, msg)
                     }
                 }
             } catch (e: Exception) {

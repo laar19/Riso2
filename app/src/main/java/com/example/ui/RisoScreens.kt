@@ -2054,12 +2054,21 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
                             )
 
                             if (newLlmTestMsg != null) {
-                                Text(
-                                    text = newLlmTestMsg!!,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = if (newLlmTestMsg!!.startsWith("✓")) Color(0xFF10B981) else MaterialTheme.colorScheme.error
-                                )
+                                val isOk = newLlmTestMsg!!.startsWith("✓")
+                                Surface(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    color = if (isOk) Color(0xFF10B981).copy(alpha = 0.1f) else MaterialTheme.colorScheme.error.copy(alpha = 0.08f),
+                                    shape = RoundedCornerShape(6.dp),
+                                    border = BorderStroke(0.5.dp, if (isOk) Color(0xFF10B981).copy(alpha = 0.3f) else MaterialTheme.colorScheme.error.copy(alpha = 0.25f))
+                                ) {
+                                    Text(
+                                        text = newLlmTestMsg!!,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = if (isOk) Color(0xFF059669) else MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
+                                    )
+                                }
                             }
 
                             Row(
@@ -2071,7 +2080,7 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
                                         if (newLlmKey.isNotBlank()) {
                                             isTestingNewLlm = true
                                             viewModel.testLlmConnection(newLlmProvider, newLlmEndpoint, newLlmKey, newLlmModel) { ok, msg ->
-                                                newLlmTestMsg = if (ok) "✓ Conexión OK" else "✕ $msg"
+                                                newLlmTestMsg = msg
                                                 isTestingNewLlm = false
                                             }
                                         } else {
@@ -2490,12 +2499,21 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
                             }
 
                             if (newSttTestMsg != null) {
-                                Text(
-                                    text = newSttTestMsg!!,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = if (newSttTestMsg!!.startsWith("✓")) Color(0xFF10B981) else MaterialTheme.colorScheme.error
-                                )
+                                val isOk = newSttTestMsg!!.startsWith("✓")
+                                Surface(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    color = if (isOk) Color(0xFF10B981).copy(alpha = 0.1f) else MaterialTheme.colorScheme.error.copy(alpha = 0.08f),
+                                    shape = RoundedCornerShape(6.dp),
+                                    border = BorderStroke(0.5.dp, if (isOk) Color(0xFF10B981).copy(alpha = 0.3f) else MaterialTheme.colorScheme.error.copy(alpha = 0.25f))
+                                ) {
+                                    Text(
+                                        text = newSttTestMsg!!,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = if (isOk) Color(0xFF059669) else MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
+                                    )
+                                }
                             }
 
                             Row(
@@ -2506,7 +2524,7 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
                                     onClick = {
                                         isTestingNewStt = true
                                         viewModel.testSttConnection(newSttIsLocal, newSttEndpoint, newSttKey, newSttModel) { ok, msg ->
-                                            newSttTestMsg = if (ok) "✓ Conexión OK" else "✕ $msg"
+                                            newSttTestMsg = msg
                                             isTestingNewStt = false
                                         }
                                     },
