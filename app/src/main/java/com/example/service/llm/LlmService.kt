@@ -345,6 +345,7 @@ class LlmService {
         customApiKey: String? = null,
         apiEndpoint: String? = null,
         modelName: String? = null,
+        sessionId: String? = null,
         mcpEmailEnabled: Boolean = true,
         mcpGithubEnabled: Boolean = false,
         mcpGitlabEnabled: Boolean = false,
@@ -443,7 +444,8 @@ class LlmService {
                     modelName = modelName ?: "",
                     systemPrompt = systemPrompt,
                     history = history,
-                    activeToolsList = activeToolsList
+                    activeToolsList = activeToolsList,
+                    sessionId = sessionId
                 )
             }
         } catch (e: Throwable) {
@@ -458,10 +460,18 @@ class LlmService {
         modelName: String,
         systemPrompt: String,
         history: List<GeminiContent>,
-        activeToolsList: List<GeminiTool>
+        activeToolsList: List<GeminiTool>,
+        sessionId: String? = null
     ): GeminiResponse = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
         val base = if (endpointUrl.isNotBlank()) endpointUrl.trimEnd('/') else "https://api.openai.com/v1"
         val fullUrl = if (base.endsWith("/chat/completions")) base else "$base/chat/completions"
+
+        // OpenCode Go strictly requires 'x-opencode-session' header (added 2026-09-06)
+        val stableConversationId = if (!sessionId.isNullOrBlank()) {
+            "riso_session_${sessionId.replace("-", "")}"
+        } else {
+            "riso_conv_${System.currentTimeMillis()}"
+        }
 
         val messagesArray = JSONArray()
         // System instruction
@@ -526,6 +536,8 @@ class LlmService {
             .url(fullUrl)
             .addHeader("Authorization", "Bearer ${apiKey.trim()}")
             .addHeader("Content-Type", "application/json")
+            .addHeader("User-Agent", "RisoApp/1.0 (Android; okhttp)")
+            .addHeader("x-opencode-session", stableConversationId)
             .post(requestBody)
             .build()
 
@@ -541,6 +553,8 @@ class LlmService {
                 .url(fullUrl)
                 .addHeader("Authorization", "Bearer ${apiKey.trim()}")
                 .addHeader("Content-Type", "application/json")
+                .addHeader("User-Agent", "RisoApp/1.0 (Android; okhttp)")
+                .addHeader("x-opencode-session", stableConversationId)
                 .post(requestBody)
                 .build()
             response = okHttpClient.newCall(request).execute()

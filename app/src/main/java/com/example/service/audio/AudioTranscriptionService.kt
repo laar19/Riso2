@@ -53,6 +53,7 @@ class AudioTranscriptionService {
                 .url(targetUrl)
                 .addHeader("Authorization", "Bearer $cleanKey")
                 .addHeader("User-Agent", "RisoApp/1.0 (Android; okhttp)")
+                .addHeader("x-opencode-session", "riso_stt_${System.currentTimeMillis()}")
                 .post(requestBody)
                 .build()
 

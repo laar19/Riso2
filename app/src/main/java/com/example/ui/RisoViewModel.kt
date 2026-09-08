@@ -43,6 +43,8 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
     private val webSearchService = com.example.service.search.WebSearchService()
     private val audioRecorder = AudioRecorderHelper(application)
     private val transcriptionService = AudioTranscriptionService()
+    private val speechRecognizer = com.example.service.audio.OnDeviceSpeechRecognizerHelper(application)
+    private val _pendingLocalTranscription = MutableStateFlow<String?>(null)
 
     // Observable States
     val sessions: StateFlow<List<ChatSession>> = repository.allSessions
@@ -701,23 +703,80 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
     fun startAudioRecording() {
         if (_isRecordingAudio.value) return
         val activeProfile = sttProfiles.value.firstOrNull { it.id == activeSttProfileId.value }
-        val profileName = activeProfile?.name ?: if (_sttProvider.value.contains("Local")) "Whisper Local" else "Whisper API"
+        val isLocal = activeProfile?.isLocal == true
 
-        val res = audioRecorder.startRecording()
-        if (res.isSuccess) {
+        if (isLocal) {
+            if (_localWhisperStatus.value != "Ready") {
+                _recordingFeedback.value = "⚠️ Modelo Whisper Local no descargado. Descárgalo en Ajustes o usa STT Remoto."
+                return
+            }
+
+            _pendingLocalTranscription.value = null
             _isRecordingAudio.value = true
-            _recordingFeedback.value = "Grabando... Toca el micrófono para terminar y transcribir"
+            _recordingFeedback.value = "Escuchando con Whisper Local... Habla ahora"
+
+            speechRecognizer.startListening(
+                onResult = { recognizedText ->
+                    _pendingLocalTranscription.value = recognizedText
+                    _recordingFeedback.value = "✓ Voz detectada: $recognizedText"
+                },
+                onError = { err ->
+                    _recordingFeedback.value = "✕ $err"
+                },
+                onStatus = { status ->
+                    _recordingFeedback.value = status
+                }
+            )
         } else {
-            _isRecordingAudio.value = false
-            _recordingFeedback.value = "✕ Error al activar micrófono: ${res.exceptionOrNull()?.localizedMessage ?: "Verifica permisos"}"
+            val res = audioRecorder.startRecording()
+            if (res.isSuccess) {
+                _isRecordingAudio.value = true
+                _recordingFeedback.value = "Grabando... Toca el micrófono para terminar y transcribir"
+            } else {
+                _isRecordingAudio.value = false
+                _recordingFeedback.value = "✕ Error al activar micrófono: ${res.exceptionOrNull()?.localizedMessage ?: "Verifica permisos"}"
+            }
         }
     }
 
     fun stopAudioRecordingAndTranscribe(onTranscript: (String) -> Unit) {
         if (!_isRecordingAudio.value) return
         _isRecordingAudio.value = false
+        val activeProfile = sttProfiles.value.firstOrNull { it.id == activeSttProfileId.value }
+        val isLocal = activeProfile?.isLocal == true
+
+        if (isLocal) {
+            _isTranscribingAudio.value = true
+            _recordingFeedback.value = "Procesando transcripción con Whisper Local..."
+
+            speechRecognizer.stopListening { immediateResult ->
+                if (immediateResult.isNotBlank()) {
+                    _pendingLocalTranscription.value = immediateResult
+                }
+            }
+
+            viewModelScope.launch {
+                // Wait up to 1.8 seconds for final recognition result
+                for (i in 0..18) {
+                    val text = _pendingLocalTranscription.value
+                    if (!text.isNullOrBlank()) {
+                        onTranscript(text.trim())
+                        _pendingLocalTranscription.value = null
+                        _isTranscribingAudio.value = false
+                        _recordingFeedback.value = "✓ Transcripción completada (Whisper Local)"
+                        return@launch
+                    }
+                    kotlinx.coroutines.delay(100)
+                }
+                _isTranscribingAudio.value = false
+                _recordingFeedback.value = "⚠️ No se detectó voz clara en el audio. Intenta hablar más cerca del micrófono."
+            }
+            return
+        }
+
+        // Remote STT logic (Groq / OpenAI Whisper)
         _isTranscribingAudio.value = true
-        _recordingFeedback.value = "Procesando audio por Whisper..."
+        _recordingFeedback.value = "Procesando audio por Whisper Remoto..."
 
         val recordedFile = audioRecorder.stopRecording()
         if (recordedFile == null || !recordedFile.exists() || recordedFile.length() < 100) {
@@ -728,7 +787,6 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch {
             try {
-                val activeProfile = sttProfiles.value.firstOrNull { it.id == activeSttProfileId.value }
                 val apiKey = activeProfile?.apiKey?.ifBlank { null }
                     ?: repository.getSetting("whisper_api_key")
                     ?: ""
@@ -737,34 +795,24 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                 val model = activeProfile?.modelName?.ifBlank { null }
                     ?: "whisper-large-v3-turbo"
 
-                if (activeProfile?.isLocal == true) {
-                    if (_localWhisperStatus.value != "Ready") {
-                        _recordingFeedback.value = "⚠️ Modelo local no descargado. Descárgalo en Ajustes."
-                    } else {
-                        _recordingFeedback.value = "Procesando con Whisper Local offline..."
-                        kotlinx.coroutines.delay(1200)
-                        onTranscript("Audio grabado offline (${recordedFile.name})")
-                    }
+                if (apiKey.isBlank()) {
+                    _recordingFeedback.value = "✕ Configura tu API Key de Whisper o Groq en Ajustes."
                 } else {
-                    if (apiKey.isBlank()) {
-                        _recordingFeedback.value = "✕ Configura tu API Key de Whisper o Groq en Ajustes."
-                    } else {
-                        val result = transcriptionService.transcribeAudio(
-                            file = recordedFile,
-                            endpointUrl = endpoint,
-                            apiKey = apiKey,
-                            modelName = model
-                        )
-                        result.onSuccess { text ->
-                            if (text.isNotBlank()) {
-                                onTranscript(text)
-                                _recordingFeedback.value = "✓ Transcripción completada"
-                            } else {
-                                _recordingFeedback.value = "⚠️ No se detectó voz clara en el audio."
-                            }
-                        }.onFailure { err ->
-                            _recordingFeedback.value = "✕ ${err.localizedMessage ?: "Error al transcribir"}"
+                    val result = transcriptionService.transcribeAudio(
+                        file = recordedFile,
+                        endpointUrl = endpoint,
+                        apiKey = apiKey,
+                        modelName = model
+                    )
+                    result.onSuccess { text ->
+                        if (text.isNotBlank()) {
+                            onTranscript(text)
+                            _recordingFeedback.value = "✓ Transcripción completada"
+                        } else {
+                            _recordingFeedback.value = "⚠️ No se detectó voz clara en el audio."
                         }
+                    }.onFailure { err ->
+                        _recordingFeedback.value = "✕ ${err.localizedMessage ?: "Error al transcribir"}"
                     }
                 }
             } catch (e: Exception) {
@@ -1042,6 +1090,7 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                         customApiKey = key,
                         apiEndpoint = endpoint,
                         modelName = modelName,
+                        sessionId = sessionId,
                         mcpEmailEnabled = mcpEmailEnabled,
                         mcpGithubEnabled = mcpGithubEnabled,
                         mcpGitlabEnabled = mcpGitlabEnabled,
@@ -1434,6 +1483,7 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                 customApiKey = key,
                 apiEndpoint = endpoint,
                 modelName = modelName,
+                sessionId = sessionId,
                 mcpEmailEnabled = mcpEmailEnabled,
                 mcpGithubEnabled = mcpGithubEnabled,
                 mcpGitlabEnabled = mcpGitlabEnabled,
@@ -1795,6 +1845,7 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                             .url(chatUrl)
                             .addHeader("Authorization", "Bearer $cleanKey")
                             .addHeader("User-Agent", "RisoApp/1.0 (Android; okhttp)")
+                            .addHeader("x-opencode-session", "riso_test_${System.currentTimeMillis()}")
                             .addHeader("Content-Type", "application/json")
                             .post(body)
                             .build()
@@ -1815,7 +1866,7 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                                     } else null
                                 } catch (e: Exception) { null }
 
-                                val cleanDetail = detail?.take(120)?.trim()
+                                val cleanDetail = detail?.take(140)?.trim()
                                 if (resp.code == 401 || resp.code == 403) {
                                     success = false
                                     msg = when {
@@ -1827,14 +1878,8 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                                             "✕ Error ${resp.code}: Clave de API rechazada"
                                     }
                                 } else if (resp.code == 400) {
-                                    if (cleanDetail?.contains("not supported", ignoreCase = true) == true || cleanDetail?.contains("model", ignoreCase = true) == true) {
-                                        success = false
-                                        msg = "✕ Error 400: $cleanDetail"
-                                    } else {
-                                        // Some strict APIs complain about test params, but connection/auth succeeded
-                                        success = true
-                                        msg = "✓ Conexión válida ($providerTag)"
-                                    }
+                                    success = false
+                                    msg = "✕ Error 400: ${cleanDetail ?: "Parámetros no admitidos o sesión requerida"}"
                                 } else if (resp.code == 404) {
                                     // 2. Fallback check: If endpoint does not have /chat/completions directly, query /models
                                     val modelsReq = Request.Builder()
