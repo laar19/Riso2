@@ -9,7 +9,8 @@ data class ChatSession(
     @PrimaryKey val id: String = UUID.randomUUID().toString(),
     val title: String,
     val llmProvider: String, // "Gemini" | "OpenAI" | "Claude"
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    val isPinned: Boolean = false
 )
 
 @Entity(tableName = "chat_messages")

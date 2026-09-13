@@ -54,8 +54,7 @@ data class GeminiFunctionResponse(
 
 @JsonClass(generateAdapter = true)
 data class GeminiTool(
-    val functionDeclarations: List<GeminiFunctionDecl>? = null,
-    val googleSearchRetrieval: Map<String, Any?>? = null
+    val functionDeclarations: List<GeminiFunctionDecl>? = null
 )
 
 @JsonClass(generateAdapter = true)
@@ -330,12 +329,14 @@ class LlmService {
         )
     )
 
-    private fun isKeyInvalidOrPlaceholder(key: String?): Boolean {
-        if (key.isNullOrBlank()) return true
-        val trimmed = key.trim()
-        return trimmed.equals("MY_GEMINI_API_KEY", ignoreCase = true) ||
-                trimmed.equals("YOUR_API_KEY", ignoreCase = true) ||
-                trimmed.contains("PLACEHOLDER", ignoreCase = true)
+    companion object {
+        fun isKeyInvalidOrPlaceholder(key: String?): Boolean {
+            if (key.isNullOrBlank()) return true
+            val trimmed = key.trim()
+            return trimmed.equals("MY_GEMINI_API_KEY", ignoreCase = true) ||
+                    trimmed.equals("YOUR_API_KEY", ignoreCase = true) ||
+                    trimmed.contains("PLACEHOLDER", ignoreCase = true)
+        }
     }
 
     // Execute completion against Gemini (supports fallback if customized key is empty)
@@ -352,7 +353,7 @@ class LlmService {
         githubUsername: String = "",
         gitlabUrl: String = "",
         internetSearchEnabled: Boolean = false,
-        searchProvider: String = "google_grounding"
+        searchProvider: String = "duckduckgo_scraper"
     ): GeminiResponse {
         val resolvedKey = if (!customApiKey.isNullOrBlank()) {
             customApiKey
@@ -364,6 +365,55 @@ class LlmService {
         if (isGemini && isKeyInvalidOrPlaceholder(resolvedKey)) {
             Log.w(TAG, "Gemini API Key is not configured or is placeholder. Providing offline guidance.")
             val lastUserMessage = history.lastOrNull { it.role == "user" }?.parts?.firstOrNull()?.text ?: ""
+            val lower = lastUserMessage.lowercase()
+            val isEmailCheck = lower.contains("inbox") ||
+                    lower.contains("bandeja") ||
+                    lower.contains("mailbox") ||
+                    // English combinations: check my inbox, check email, list emails, see emails, read inbox, my mail, unread emails, get emails, show emails
+                    ((lower.contains("email") || lower.contains("mail") || lower.contains("message")) &&
+                    (lower.contains("check") || lower.contains("inbox") || lower.contains("list") || lower.contains("show") || lower.contains("see") || lower.contains("read") || lower.contains("get") || lower.contains("fetch") || lower.contains("unread") || lower.contains("recent") || lower.contains("latest") || lower.contains("my") || lower.contains("any") || lower.contains("new"))) ||
+                    // Spanish combinations: revisar correo, ver mis correos, consultar bandeja, etc.
+                    ((lower.contains("correo") || lower.contains("buzón") || lower.contains("email") || lower.contains("mail") || lower.contains("mensaje")) &&
+                    (lower.contains("revis") || lower.contains("chequ") || lower.contains("le") || lower.contains("ver") || lower.contains("consult") || lower.contains("listar") || lower.contains("mostrar") || lower.contains("hay") || lower.contains("cuant") || lower.contains("dime") || lower.contains("teng") || lower.contains("nuev") || lower.contains("ultim") || lower.contains("recient") || lower.contains("mis") || lower.contains("pendient")))
+            if (isEmailCheck && mcpEmailEnabled) {
+                return GeminiResponse(
+                    candidates = listOf(
+                        GeminiCandidate(
+                            content = GeminiContent(
+                                role = "model",
+                                parts = listOf(
+                                    GeminiPart(
+                                        functionCall = GeminiFunctionCall(
+                                            name = "list_inbox",
+                                            args = mapOf("limit" to 10)
+                                        )
+                                    )
+                                )
+                            )
+                        )
+                    )
+                )
+            }
+            val isGithubRepos = lower.contains("github") && (lower.contains("repo") || lower.contains("proyect") || lower.contains("listar") || lower.contains("ver"))
+            if (isGithubRepos && mcpGithubEnabled) {
+                return GeminiResponse(
+                    candidates = listOf(
+                        GeminiCandidate(
+                            content = GeminiContent(
+                                role = "model",
+                                parts = listOf(
+                                    GeminiPart(
+                                        functionCall = GeminiFunctionCall(
+                                            name = "list_github_repositories",
+                                            args = mapOf("username" to githubUsername)
+                                        )
+                                    )
+                                )
+                            )
+                        )
+                    )
+                )
+            }
             return getErrorResponse(getOfflineAssistantResponse(lastUserMessage))
         }
 
@@ -711,24 +761,34 @@ class LlmService {
 
     private fun getOfflineAssistantResponse(userMessage: String): String {
         val lower = userMessage.lowercase()
-        val isGreeting = lower.contains("hola") || lower.contains("buenos") || lower.contains("buenas") || lower.contains("saludos") || lower.contains("quien eres") || lower.contains("qué eres")
-        val isEmail = lower.contains("correo") || lower.contains("email") || lower.contains("bandeja") || lower.contains("inbox") || lower.contains("mensaje")
+        val isEmail = lower.contains("correo") || lower.contains("email") || lower.contains("bandeja") || lower.contains("inbox") || lower.contains("mensaje") || lower.contains("buzón")
+        val isGit = lower.contains("git") || lower.contains("github") || lower.contains("gitlab") || lower.contains("repositorio") || lower.contains("issue")
         val isSettings = lower.contains("clave") || lower.contains("api") || lower.contains("key") || lower.contains("ajustes") || lower.contains("configurar")
+        val isGreeting = lower.contains("hola") || lower.contains("buenos") || lower.contains("buenas") || lower.contains("saludos") || lower.contains("quien eres") || lower.contains("qué eres")
 
         return buildString {
-            if (isGreeting) {
-                append("¡Hola! Soy **Riso**, tu asistente de automatización y correos para Android.\n\n")
-            } else if (isEmail) {
-                append("Puedo ayudarte a revisar, redactar y organizar tus correos con soporte MCP. Puedes ver tu bandeja de entrada en la pestaña **Bandeja**.\n\n")
+            if (isEmail) {
+                append("📬 **Gestión de Correo y Bandeja Riso:**\n\n")
+                append("Detecté tu solicitud sobre tu correo o bandeja de entrada. Puedes interactuar con tus correos directamente:\n\n")
+                append("• Pulsa el botón **'+'** en la caja de texto para activar o configurar tu cuenta en **Conexiones MCP (Email)**.\n")
+                append("• Puedes pedirme: *\"revisa mi bandeja de entrada\"*, *\"dime cuántos correos sin leer tengo\"*, o *\"busca correos de soporte\"*.\n")
+                append("• Para activar resúmenes y respuestas con modelos de lenguaje avanzados, añade tu clave API en **Ajustes**.")
+            } else if (isGit) {
+                append("🐙 **Integración Git (GitHub / GitLab):**\n\n")
+                append("Riso incluye soporte para listar repositorios, consultar issues y crear tickets mediante Model Context Protocol (MCP).\n\n")
+                append("• Pulsa el botón **'+'** en el chat y selecciona la pestaña **GitHub / GitLab** para añadir tu token de acceso (PAT).\n")
+                append("• Con un token configurado, puedes pedirle a Riso: *\"lista mis repositorios\"*, *\"crea una issue en repo...\"*.")
             } else if (isSettings) {
-                append("Puedes configurar tus claves de API y modelos en la pestaña **Ajustes**.\n\n")
+                append("⚙️ Puedes configurar tus claves de API, cuentas y modelos en la pestaña **Ajustes**.\n\n")
+            } else if (isGreeting) {
+                append("¡Hola! Soy **Riso**, tu asistente de automatización y correos para Android con soporte MCP.\n\n")
+                append("Puedo ayudarte a revisar tu bandeja de correo, administrar tus repositorios de GitHub/GitLab, buscar información y más.\n\n")
+                append("💡 **Para activar respuestas generativas completas:**\n")
+                append("Ingresa tu clave de API (Gemini, Claude o DeepSeek) en la pestaña **Ajustes**.")
             } else {
                 append("He recibido tu mensaje: \"$userMessage\".\n\nActualmente estoy operando en **Modo Asistente Local**.\n\n")
+                append("💡 Para habilitar respuestas generativas completas, añade tu clave API de Gemini o DeepSeek en la pestaña **Ajustes**.")
             }
-            append("💡 **Para activar respuestas generativas completas con Gemini:**\n")
-            append("1. Abre la pestaña **Ajustes** en el menú inferior.\n")
-            append("2. En **Modelos LLM (APIs)**, ingresa tu clave API de Google Gemini.\n")
-            append("3. También puedes ingresar tu clave en el panel de Secretos de AI Studio.")
         }
     }
 

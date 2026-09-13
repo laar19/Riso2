@@ -16,7 +16,7 @@ import com.example.data.model.AppSetting
         PendingAction::class,
         AppSetting::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class RisoDatabase : RoomDatabase() {

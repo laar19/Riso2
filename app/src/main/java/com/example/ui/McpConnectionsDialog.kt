@@ -982,40 +982,7 @@ fun McpConnectionsDialog(
                                                 }
                                             }
 
-                                            // 2. Google Grounding
-                                            Card(
-                                                shape = RoundedCornerShape(10.dp),
-                                                colors = CardDefaults.cardColors(
-                                                    containerColor = if (searchProvider == "google_grounding") MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
-                                                                     else MaterialTheme.colorScheme.surface
-                                                ),
-                                                border = BorderStroke(
-                                                    1.dp,
-                                                    if (searchProvider == "google_grounding") MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
-                                                    else MaterialTheme.colorScheme.outline.copy(alpha = 0.12f)
-                                                ),
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .clickable { viewModel.updateSetting("search_provider", "google_grounding") }
-                                            ) {
-                                                Row(
-                                                    modifier = Modifier.padding(10.dp),
-                                                    verticalAlignment = Alignment.CenterVertically
-                                                ) {
-                                                    RadioButton(
-                                                        selected = searchProvider == "google_grounding",
-                                                        onClick = { viewModel.updateSetting("search_provider", "google_grounding") },
-                                                        colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colorScheme.primary)
-                                                    )
-                                                    Spacer(modifier = Modifier.width(6.dp))
-                                                    Column {
-                                                        Text("Google Grounding (Gemini)", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                                        Text("Grounding nativo con Google Search utilizando tu clave de Gemini.", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
-                                                    }
-                                                }
-                                            }
-
-                                            // 3. Brave Search API
+                                            // 2. Brave Search API
                                             val hasBraveKey = !settings["brave_search_api_key"].isNullOrBlank()
                                             Card(
                                                 shape = RoundedCornerShape(10.dp),
@@ -1170,38 +1137,6 @@ fun McpConnectionsDialog(
                                         Text("📂", fontSize = 18.sp)
                                         Spacer(modifier = Modifier.height(3.dp))
                                         Text("Archivo", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                    }
-                                }
-                            }
-
-                            Text(
-                                text = "Muestras de Visión Engine",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.secondary
-                            )
-
-                            listOf(
-                                Triple("recibo", "🧾 Recibo de Compra.png", "Extrae precios, total e impuestos"),
-                                Triple("menu", "🍽️ Menú de Restaurant.png", "Traduce platos clásicos franceses"),
-                                Triple("grafico", "📈 Gráfico de Métricas Q3.png", "Análisis cuantitativo de metas")
-                            ).forEach { (id, title, desc) ->
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 2.dp)
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .clickable {
-                                            viewModel.attachSampleImage(id)
-                                            onDismiss()
-                                        }
-                                        .border(BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)), RoundedCornerShape(8.dp))
-                                        .padding(8.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column {
-                                        Text(title, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                        Text(desc, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
                                     }
                                 }
                             }

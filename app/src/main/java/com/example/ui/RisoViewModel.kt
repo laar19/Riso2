@@ -32,6 +32,12 @@ import org.json.JSONObject
 import java.util.*
 import java.util.concurrent.TimeUnit
 
+data class ChatAttachment(
+    val id: String = java.util.UUID.randomUUID().toString(),
+    val name: String,
+    val type: String = "file" // "camera", "image", "file"
+)
+
 class RisoViewModel(application: Application) : AndroidViewModel(application) {
 
     private val TAG = "RisoViewModel"
@@ -39,6 +45,7 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
     private val database = RisoDatabase.getDatabase(application)
     private val repository = RisoRepository(database.risoDao())
     private val emailService = EmailService(repository)
+    private val gitService = com.example.service.git.GitService()
     private val llmService = LlmService()
     private val webSearchService = com.example.service.search.WebSearchService()
     private val audioRecorder = AudioRecorderHelper(application)
@@ -48,7 +55,7 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
 
     // Observable States
     val sessions: StateFlow<List<ChatSession>> = repository.allSessions
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     private val _selectedSessionId = MutableStateFlow<String?>(null)
     val selectedSessionId: StateFlow<String?> = _selectedSessionId.asStateFlow()
@@ -124,9 +131,17 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
     private val _recordingFeedback = MutableStateFlow("")
     val recordingFeedback: StateFlow<String> = _recordingFeedback.asStateFlow()
 
-    // Image Upload attachment state
-    private val _attachedImage = MutableStateFlow<String?>(null) // e.g. "Recibo" | "Menu" | "Grafico"
+    // Multi-attachment state supporting photos, gallery images, and files
+    private val _attachments = MutableStateFlow<List<ChatAttachment>>(emptyList())
+    val attachments: StateFlow<List<ChatAttachment>> = _attachments.asStateFlow()
+
+    // Backwards-compatible single attachedImage
+    private val _attachedImage = MutableStateFlow<String?>(null)
     val attachedImage: StateFlow<String?> = _attachedImage.asStateFlow()
+
+    // Status message for dynamic loading / progress
+    private val _loadingStatusText = MutableStateFlow("Consultando información...")
+    val loadingStatusText: StateFlow<String> = _loadingStatusText.asStateFlow()
 
     init {
         // Load default planning mode from database
@@ -251,55 +266,17 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
             val activeSttId = repository.getSetting("active_stt_profile_id") ?: ""
             if (sttProfilesJson.isNotBlank()) {
                 val parsedStt = parseSttProfiles(sttProfilesJson)
-                // Always ensure local whisper profile is available and not lost
-                val hasLocal = parsedStt.any { it.isLocal }
-                val finalList = if (!hasLocal) {
-                    listOf(
-                        SttProfile(
-                            id = "stt_local_default",
-                            name = "Whisper Local (Offline)",
-                            isLocal = true,
-                            apiEndpoint = "",
-                            modelName = "whisper-small-v3",
-                            apiKey = ""
-                        )
-                    ) + parsedStt
-                } else parsedStt
-                sttProfiles.value = finalList
-                if (finalList.any { it.id == activeSttId }) {
+                sttProfiles.value = parsedStt
+                if (parsedStt.any { it.id == activeSttId }) {
                     activeSttProfileId.value = activeSttId
-                } else if (finalList.isNotEmpty()) {
-                    activeSttProfileId.value = finalList.first().id
-                    repository.saveSetting("active_stt_profile_id", finalList.first().id)
+                } else {
+                    activeSttProfileId.value = ""
+                    repository.saveSetting("active_stt_profile_id", "")
                 }
             } else {
-                val initStt = mutableListOf<SttProfile>()
-                val whisperApiKey = repository.getSetting("whisper_api_key") ?: ""
-                initStt.add(
-                    SttProfile(
-                        id = "stt_remote_default",
-                        name = "Whisper API Remoto",
-                        isLocal = false,
-                        apiEndpoint = "https://api.openai.com/v1/audio/transcriptions",
-                        modelName = "whisper-1",
-                        apiKey = whisperApiKey
-                    )
-                )
-                initStt.add(
-                    SttProfile(
-                        id = "stt_local_default",
-                        name = "Whisper Local (Offline)",
-                        isLocal = true,
-                        apiEndpoint = "",
-                        modelName = "whisper-small-v3",
-                        apiKey = ""
-                    )
-                )
-                sttProfiles.value = initStt
-                val defaultId = if (savedStt == "Whisper Local small-v3") "stt_local_default" else "stt_remote_default"
-                activeSttProfileId.value = defaultId
-                repository.saveSetting("active_stt_profile_id", defaultId)
-                saveSttProfilesToDb(initStt)
+                sttProfiles.value = emptyList()
+                activeSttProfileId.value = ""
+                repository.saveSetting("active_stt_profile_id", "")
             }
             
             // Purge leftover empty sessions on launch
@@ -763,7 +740,7 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                         onTranscript(text.trim())
                         _pendingLocalTranscription.value = null
                         _isTranscribingAudio.value = false
-                        _recordingFeedback.value = "✓ Transcripción completada (Whisper Local)"
+                        _recordingFeedback.value = ""
                         return@launch
                     }
                     kotlinx.coroutines.delay(100)
@@ -807,7 +784,7 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                     result.onSuccess { text ->
                         if (text.isNotBlank()) {
                             onTranscript(text)
-                            _recordingFeedback.value = "✓ Transcripción completada"
+                            _recordingFeedback.value = ""
                         } else {
                             _recordingFeedback.value = "⚠️ No se detectó voz clara en el audio."
                         }
@@ -836,9 +813,50 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
         toggleMicrophone(onTranscript)
     }
 
-    // Attachment manipulation
+    fun clearRecordingFeedback() {
+        _recordingFeedback.value = ""
+    }
+
+    // Multi-attachment manipulation
+    fun addAttachment(name: String, type: String = "file") {
+        val list = _attachments.value.toMutableList()
+        list.add(ChatAttachment(name = name, type = type))
+        _attachments.value = list
+        _attachedImage.value = name
+    }
+
+    fun removeAttachment(id: String) {
+        val list = _attachments.value.filter { it.id != id }
+        _attachments.value = list
+        _attachedImage.value = list.lastOrNull()?.name
+    }
+
+    fun clearAttachments() {
+        _attachments.value = emptyList()
+        _attachedImage.value = null
+    }
+
     fun attachSampleImage(imageName: String?) {
-        _attachedImage.value = imageName
+        if (imageName == null) {
+            clearAttachments()
+        } else {
+            addAttachment(imageName, "image")
+        }
+    }
+
+    fun renameSession(sessionId: String, newTitle: String) {
+        viewModelScope.launch {
+            if (newTitle.isNotBlank()) {
+                repository.updateSessionTitle(sessionId, newTitle.trim())
+            }
+        }
+    }
+
+    suspend fun getSessionMarkdown(sessionId: String): Pair<String, String> {
+        val session = sessions.value.firstOrNull { it.id == sessionId }
+        val title = session?.title ?: "Conversación Riso"
+        val exportText = getSessionExportText(sessionId)
+        return Pair(title, exportText)
     }
 
     fun selectSession(sessionId: String) {
@@ -904,6 +922,57 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun togglePinSession(sessionId: String) {
+        viewModelScope.launch {
+            val session = sessions.value.firstOrNull { it.id == sessionId } ?: return@launch
+            val newPinned = !session.isPinned
+            repository.updateSessionPinned(sessionId, newPinned)
+        }
+    }
+
+    suspend fun getSessionExportText(sessionId: String): String {
+        val session = sessions.value.firstOrNull { it.id == sessionId }
+        val msgs = repository.getMessagesListForSession(sessionId)
+        val title = session?.title ?: "Conversación Riso"
+        val sb = StringBuilder()
+        sb.append("# $title\n")
+        val dateStr = java.text.SimpleDateFormat("dd/MM/yyyy HH:mm", java.util.Locale.getDefault())
+            .format(java.util.Date(session?.createdAt ?: System.currentTimeMillis()))
+        sb.append("*Fecha de creación: $dateStr*\n\n---\n\n")
+        msgs.forEach { m ->
+            val senderLabel = when (m.sender) {
+                "user" -> "👤 Usuario"
+                "ai" -> "🤖 Riso Agent"
+                "system" -> "⚙️ Sistema"
+                else -> "🛠️ Herramienta"
+            }
+            val time = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+                .format(java.util.Date(m.timestamp))
+            sb.append("**$senderLabel** ($time):\n")
+            sb.append("${m.text}\n\n")
+        }
+        return sb.toString().trim()
+    }
+
+    fun formatSelectedMessagesExport(selectedIds: Set<String>): String {
+        val msgs = currentMessages.value.filter { it.id in selectedIds }
+        val sb = StringBuilder()
+        sb.append("# Selección de Mensajes - Riso Agent\n\n---\n\n")
+        msgs.forEach { m ->
+            val senderLabel = when (m.sender) {
+                "user" -> "👤 Usuario"
+                "ai" -> "🤖 Riso Agent"
+                "system" -> "⚙️ Sistema"
+                else -> "🛠️ Herramienta"
+            }
+            val time = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+                .format(java.util.Date(m.timestamp))
+            sb.append("**$senderLabel** ($time):\n")
+            sb.append("${m.text}\n\n")
+        }
+        return sb.toString().trim()
+    }
+
     // Refresh Live Inbox (Bandeja tab)
     fun refreshLiveInbox() {
         viewModelScope.launch {
@@ -932,16 +1001,33 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
             _isTestingConnection.value = true
             _connectionTestResult.value = null
             try {
-                val imap = repository.getSetting("imap_server") ?: ""
-                val email = repository.getSetting("email_address") ?: ""
-                val pass = repository.getSetting("email_password") ?: ""
+                val activeId = activeEmailAccountId.value
+                val activeAcc = emailAccounts.value.firstOrNull { it.id == activeId }
+                    ?: emailAccounts.value.firstOrNull { it.isEnabled }
+                    ?: emailAccounts.value.firstOrNull()
+
+                val imap = activeAcc?.imapServer ?: repository.getSetting("imap_server") ?: ""
+                val email = activeAcc?.emailAddress ?: repository.getSetting("email_address") ?: ""
+                val pass = activeAcc?.passwordVal ?: repository.getSetting("email_password") ?: ""
+                val port = activeAcc?.imapPort ?: repository.getSetting("imap_port") ?: "993"
                 
                 if (imap.isBlank() || email.isBlank() || pass.isBlank()) {
-                    _connectionTestResult.value = "Utilizando sandbox offline de Riso (Sin credenciales configuradas)"
+                    _connectionTestResult.value = "⚠️ Configuración incompleta: Ingresa el servidor IMAP, tu correo y la contraseña de aplicación."
                 } else {
-                    val list = emailService.listInbox(1)
-                    _connectionTestResult.value = "¡Conexión IMAP Exitosa! Se recuperaron ${list.size} correos."
-                    refreshLiveInbox()
+                    _connectionTestResult.value = "Probando conexión con $email en $imap:$port..."
+                    val testAcc = activeAcc ?: EmailAccount(
+                        emailAddress = email,
+                        imapServer = imap,
+                        imapPort = port,
+                        passwordVal = pass
+                    )
+                    val (success, msg) = emailService.testEmailAccountConnection(testAcc)
+                    if (success) {
+                        _connectionTestResult.value = "¡Conexión IMAP Exitosa! $msg"
+                        refreshLiveInbox()
+                    } else {
+                        _connectionTestResult.value = "Error al conectar: $msg"
+                    }
                 }
             } catch (e: Exception) {
                 _connectionTestResult.value = "Error al conectar: ${e.message}"
@@ -954,16 +1040,21 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
     // Primary agent loop
     fun sendMessage(userText: String) {
         val sessionId = _selectedSessionId.value ?: return
+        val currentAttachments = _attachments.value
         val attachedImg = _attachedImage.value
         
-        if (userText.isBlank() && attachedImg == null) return
+        if (userText.isBlank() && currentAttachments.isEmpty() && attachedImg == null) return
 
         viewModelScope.launch {
-            val messageText = if (attachedImg != null) {
-                "📷 [Imagen: $attachedImg.png] $userText"
-            } else {
-                userText
-            }
+            val messageText = buildString {
+                if (currentAttachments.isNotEmpty()) {
+                    val names = currentAttachments.joinToString(", ") { "[${it.name}]" }
+                    append("📎 Adjuntos: $names\n")
+                } else if (attachedImg != null) {
+                    append("📎 Adjunto: [$attachedImg]\n")
+                }
+                append(userText)
+            }.trim()
 
             // If first message in this session, update title to user prompt
             val existingMsgCount = repository.getMessageCountForSession(sessionId)
@@ -982,126 +1073,66 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                 )
             )
 
+            // Clear attachments immediately after sending
+            clearAttachments()
+
             _isLlmLoading.value = true
+            val lower = userText.lowercase()
+            if (lower.contains("correo") || lower.contains("bandeja") || lower.contains("email") || lower.contains("inbox") || lower.contains("buzón")) {
+                _loadingStatusText.value = "Consultando bandeja de correo..."
+            } else {
+                _loadingStatusText.value = "Generando respuesta..."
+            }
+
             try {
-                if (attachedImg != null) {
-                    // Vision Engine simulation
-                    kotlinx.coroutines.delay(1200)
-                    val visionResponse = when (attachedImg.lowercase()) {
-                        "recibo" -> """
-                            **[Riso Vision Engine: Análisis de Recibo de Compra]**
-                            
-                            Aquí tienes la extracción de datos en tiempo real de tu imagen cargada:
-                            
-                            *   **Establecimiento:** Supermercado La Vega S.A.
-                            *   **Fecha/Hora:** 15 de Junio, 2026, 14:32
-                            *   **Código de Transacción:** TR-984021-X
-                            
-                            | Item | Cantidad | Precio Unitario | Total |
-                            | :--- | :---: | :---: | :---: |
-                            | 1. Arroz Grano Largo (1kg) | 2 | $1.50 | $3.00 |
-                            | 2. Aceite de Oliva Extra Virgen | 1 | $7.20 | $7.20 |
-                            | 3. Detergente Líquido Lavandina | 1 | $4.50 | $4.50 |
-                            | 4. Pack de Leche Descremada x6 | 1 | $5.80 | $5.80 |
-                            
-                            *   **Subtotal:** $20.50
-                            *   **Impuestos (IVA 19%):** $3.90
-                            *   **Total de la Compra:** **$24.40**
-                            
-                            *Análisis de Gasto:* Este recibo califica para tu categoría de **Alimentos y Provisiones**. ¿Deseas guardar automáticamente este registro o que redacte un correo para archivar este comprobante de gastos?
-                        """.trimIndent()
-                        
-                        "menu" -> """
-                            **[Riso Vision Engine: Análisis y Traducción de Menú]**
-                            
-                            He escaneado y traducido el menú para ti. Aquí tienes los detalles clasificados:
-                            
-                            *   **Idioma Detectado:** Francés
-                            *   **Traducción de Platillos Principales:**
-                                1.  *Boeuf Bourguignon* ($24.00) ➔ Guiso tradicional francés de buey cocinado en vino tinto, aromatizado con ajo, cebollas, zanahorias y especias.
-                                2.  *Soupe à l'Oignon* ($11.50) ➔ Sopa clásica de cebolla francesa servida hirviendo con crotones crocantes y queso Gruyère gratinado.
-                                3.  *Coq au Vin* ($22.00) ➔ Pollo tierno estofado con vino tinto de Borgoña, tocino, champiñones y manteca.
-                            *   **Especialidades Recomendadas:** El chef destaca el *Boeuf Bourguignon* como la gema de la casa.
-                            *   **Alérgenos:** Contiene gluten en los croutones de la sopa de cebolla.
-                            
-                            ¿Te gustaría que te ayude a redactar un correo para hacer una reserva o consultar por variaciones vegetarianas?
-                        """.trimIndent()
-                        
-                        else -> """
-                            **[Riso Vision Engine: Resumen Analítico de Gráfico]**
-                            
-                            He realizado el análisis cuantitativo y estructurado del gráfico cargado:
-                            
-                            *   **Tipo de Gráfico:** Gráfico de Líneas de Doble Eje (Ventas Netas vs. Margen Operativo)
-                            *   **Tendencia Detectada:** Se observa un crecimiento mensual continuo de **12.5%** en Ventas Netas durante Abril y Mayo, con pico de **$45,000 USD** al finalizar Mayo.
-                            *   **Análisis Crítico:** El Margen Operativo sufrió una contracción de **3%** a mediados del trimestre debido a cargos extraordinarios de flete y combustible logístico en envíos.
-                            *   **Métricas Q3:**
-                                - Ventas Mensuales: $38,500 USD.
-                                - Margen Promedio Logrado: 28.4% (Meta proyectada: 30%).
-                            
-                            ¿Deseas que prepare un borrador de correo con este resumen y las proyecciones detalladas para enviarlo a tu equipo?
-                        """.trimIndent()
-                    }
+                // Compile history for model (GeminiContent format)
+                val conversation = compileGeminiHistory(sessionId)
                     
-                    repository.addMessage(
-                        ChatMessage(
-                            sessionId = sessionId,
-                            sender = "ai",
-                            text = visionResponse
-                        )
-                    )
-                    _attachedImage.value = null // clear attachment
+                // Fetch credentials from active profile if available, otherwise legacy setting
+                val activeId = activeLlmProfileId.value ?: repository.getSetting("active_llm_profile_id") ?: ""
+                val profiles = llmProfiles.value
+                val activeProf = profiles.find { it.id == activeId } ?: profiles.firstOrNull()
+
+                val provider = activeProf?.provider ?: repository.getSetting("llm_provider") ?: "Gemini"
+                val key = if (activeProf != null) {
+                    activeProf.apiKey
                 } else {
-                    // Compile history for model (GeminiContent format)
-                    val conversation = compileGeminiHistory(sessionId)
-                    
-                    // Fetch credentials from active profile if available, otherwise legacy setting
-                    val activeId = activeLlmProfileId.value ?: repository.getSetting("active_llm_profile_id") ?: ""
-                    val profiles = llmProfiles.value
-                    val activeProf = profiles.find { it.id == activeId } ?: profiles.firstOrNull()
-
-                    val provider = activeProf?.provider ?: repository.getSetting("llm_provider") ?: "Gemini"
-                    val key = if (activeProf != null) {
-                        activeProf.apiKey
-                    } else {
-                        val providerKeyName = when (provider.lowercase()) {
-                            "openai" -> "openai_api_key"
-                            "claude" -> "claude_api_key"
-                            else -> "gemini_api_key"
-                        }
-                        repository.getSetting(providerKeyName)
+                    val providerKeyName = when (provider.lowercase()) {
+                        "openai" -> "openai_api_key"
+                        "claude" -> "claude_api_key"
+                        else -> "gemini_api_key"
                     }
-
-                    val mcpEmailEnabled = repository.getSetting("mcp_email_enabled") != "false"
-                    val mcpGithubEnabled = repository.getSetting("mcp_github_enabled") == "true"
-                    val mcpGitlabEnabled = repository.getSetting("mcp_gitlab_enabled") == "true"
-                    val githubUsername = repository.getSetting("github_username") ?: ""
-                    val gitlabUrl = repository.getSetting("gitlab_url") ?: "https://gitlab.com"
-                    val internetSearchEnabled = repository.getSetting("internet_search_enabled") == "true"
-                    val searchProvider = repository.getSetting("search_provider") ?: "duckduckgo_scraper"
-
-                    val endpoint = activeProf?.apiEndpoint?.ifBlank { null }
-                    val modelName = activeProf?.modelName?.ifBlank { null }
-
-                    // Call LLM Resolver with tools
-                    val response = llmService.resolveLlm(
-                        history = conversation,
-                        provider = provider,
-                        customApiKey = key,
-                        apiEndpoint = endpoint,
-                        modelName = modelName,
-                        sessionId = sessionId,
-                        mcpEmailEnabled = mcpEmailEnabled,
-                        mcpGithubEnabled = mcpGithubEnabled,
-                        mcpGitlabEnabled = mcpGitlabEnabled,
-                        githubUsername = githubUsername,
-                        gitlabUrl = gitlabUrl,
-                        internetSearchEnabled = internetSearchEnabled,
-                        searchProvider = searchProvider
-                    )
-                    processLlmResponse(sessionId, response, depth = 0)
+                    repository.getSetting(providerKeyName)
                 }
 
+                val mcpEmailEnabled = repository.getSetting("mcp_email_enabled") != "false"
+                val mcpGithubEnabled = repository.getSetting("mcp_github_enabled") == "true"
+                val mcpGitlabEnabled = repository.getSetting("mcp_gitlab_enabled") == "true"
+                val githubUsername = repository.getSetting("github_username") ?: ""
+                val gitlabUrl = repository.getSetting("gitlab_url") ?: "https://gitlab.com"
+                val internetSearchEnabled = repository.getSetting("internet_search_enabled") == "true"
+                val searchProvider = repository.getSetting("search_provider") ?: "duckduckgo_scraper"
+
+                val endpoint = activeProf?.apiEndpoint?.ifBlank { null }
+                val modelName = activeProf?.modelName?.ifBlank { null }
+
+                // Call LLM Resolver with tools
+                val response = llmService.resolveLlm(
+                    history = conversation,
+                    provider = provider,
+                    customApiKey = key,
+                    apiEndpoint = endpoint,
+                    modelName = modelName,
+                    sessionId = sessionId,
+                    mcpEmailEnabled = mcpEmailEnabled,
+                    mcpGithubEnabled = mcpGithubEnabled,
+                    mcpGitlabEnabled = mcpGitlabEnabled,
+                    githubUsername = githubUsername,
+                    gitlabUrl = gitlabUrl,
+                    internetSearchEnabled = internetSearchEnabled,
+                    searchProvider = searchProvider
+                )
+                processLlmResponse(sessionId, response, depth = 0)
             } catch (e: Throwable) {
                 Log.e(TAG, "Error in primary agent loop message loop", e)
                 repository.addMessage(
@@ -1250,13 +1281,22 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
 
             val resultObject = when (name) {
                 "list_inbox" -> {
-                    val lim = (args["limit"] as? Number)?.toInt() ?: 5
-                    val emails = emailService.listInbox(lim)
-                    mapOf("emails" to emails.map { it.toMap() })
+                    val lim = (args["limit"] as? Number)?.toInt() ?: 10
+                    val filter = args["filter"]?.toString() ?: ""
+                    val summary = emailService.fetchInboxSummary(lim, filter)
+                    mapOf(
+                        "success" to true,
+                        "account" to summary.accountEmail,
+                        "unread_count" to summary.unreadCount,
+                        "total_count" to summary.totalCount,
+                        "filter" to filter,
+                        "is_live_imap" to summary.isLiveImap,
+                        "emails" to summary.emails.map { it.toMap() }
+                    )
                 }
                 "search_emails" -> {
                     val q = args["query"]?.toString() ?: ""
-                    val lim = (args["limit"] as? Number)?.toInt() ?: 5
+                    val lim = (args["limit"] as? Number)?.toInt() ?: 10
                     val emails = emailService.searchEmails(q, lim)
                     mapOf("emails" to emails.map { it.toMap() })
                 }
@@ -1306,67 +1346,108 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                     mapOf("success" to success, "id" to id)
                 }
                 "list_github_repositories" -> {
-                    val u = args["username"]?.toString() ?: repository.getSetting("github_username") ?: ""
-                    mapOf(
-                        "success" to true,
-                        "username" to u,
-                        "repositories" to listOf(
-                            mapOf("name" to "riso-android-mcp", "stars" to 42, "language" to "Kotlin", "description" to "Local Android agent client with support for model-driven orchestration."),
-                            mapOf("name" to "stellar-agent-engine", "stars" to 128, "language" to "TypeScript", "description" to "A modular agent task supervisor.")
+                    val ghAcc = githubAccounts.value.firstOrNull { it.isEnabled && it.token.isNotBlank() }
+                        ?: githubAccounts.value.firstOrNull { it.token.isNotBlank() }
+                    val token = ghAcc?.token ?: repository.getSetting("github_token") ?: ""
+                    val u = args["username"]?.toString() ?: ghAcc?.username ?: ""
+                    if (token.isNotBlank()) {
+                        gitService.listGithubRepositories(token, u.ifBlank { null })
+                    } else {
+                        mapOf(
+                            "success" to true,
+                            "warning" to "Sin token GitHub PAT configurado. Mostrando datos de prueba locales.",
+                            "username" to u.ifBlank { "usuario-demo" },
+                            "repositories" to listOf(
+                                mapOf("name" to "riso-android-mcp", "stars" to 42, "language" to "Kotlin", "description" to "Local Android agent client with support for model-driven orchestration."),
+                                mapOf("name" to "stellar-agent-engine", "stars" to 128, "language" to "TypeScript", "description" to "A modular agent task supervisor.")
+                            )
                         )
-                    )
+                    }
                 }
                 "list_github_issues" -> {
-                    val owner = args["owner"]?.toString() ?: ""
+                    val ghAcc = githubAccounts.value.firstOrNull { it.isEnabled && it.token.isNotBlank() }
+                        ?: githubAccounts.value.firstOrNull { it.token.isNotBlank() }
+                    val token = ghAcc?.token ?: repository.getSetting("github_token") ?: ""
+                    val owner = args["owner"]?.toString() ?: ghAcc?.username ?: ""
                     val repo = args["repo"]?.toString() ?: ""
                     val state = args["state"]?.toString() ?: "open"
-                    mapOf(
-                        "success" to true,
-                        "owner" to owner,
-                        "repo" to repo,
-                        "state" to state,
-                        "issues" to listOf(
-                            mapOf("number" to 101, "title" to "Corregir padding en caja de chat", "state" to "open", "author" to "cyber_coder"),
-                            mapOf("number" to 102, "title" to "Soporte oauth en conexiones mcp", "state" to "open", "author" to "riso_dev")
+                    if (token.isNotBlank() && owner.isNotBlank() && repo.isNotBlank()) {
+                        gitService.listGithubIssues(token, owner, repo, state)
+                    } else {
+                        mapOf(
+                            "success" to true,
+                            "owner" to owner,
+                            "repo" to repo,
+                            "state" to state,
+                            "issues" to listOf(
+                                mapOf("number" to 101, "title" to "Corregir padding en caja de chat", "state" to "open", "author" to (ghAcc?.username ?: "cyber_coder")),
+                                mapOf("number" to 102, "title" to "Soporte oauth en conexiones mcp", "state" to "open", "author" to "riso_dev")
+                            )
                         )
-                    )
+                    }
                 }
                 "create_github_issue" -> {
-                    val owner = args["owner"]?.toString() ?: ""
+                    val ghAcc = githubAccounts.value.firstOrNull { it.isEnabled && it.token.isNotBlank() }
+                        ?: githubAccounts.value.firstOrNull { it.token.isNotBlank() }
+                    val token = ghAcc?.token ?: repository.getSetting("github_token") ?: ""
+                    val owner = args["owner"]?.toString() ?: ghAcc?.username ?: ""
                     val repo = args["repo"]?.toString() ?: ""
                     val title = args["title"]?.toString() ?: ""
                     val body = args["body"]?.toString() ?: ""
-                    mapOf(
-                        "success" to true,
-                        "owner" to owner,
-                        "repo" to repo,
-                        "issue_number" to 103,
-                        "title" to title,
-                        "body" to body
-                    )
+                    if (token.isNotBlank() && owner.isNotBlank() && repo.isNotBlank() && title.isNotBlank()) {
+                        gitService.createGithubIssue(token, owner, repo, title, body)
+                    } else {
+                        mapOf(
+                            "success" to true,
+                            "owner" to owner,
+                            "repo" to repo,
+                            "issue_number" to 103,
+                            "title" to title,
+                            "body" to body,
+                            "note" to "Modo simulación (agrega un Personal Access Token en el botón + para crear en tu GitHub real)."
+                        )
+                    }
                 }
                 "list_gitlab_projects" -> {
-                    val membership = args["membership"]?.toString() ?: "true"
-                    mapOf(
-                        "success" to true,
-                        "membership" to membership,
-                        "projects" to listOf(
-                            mapOf("id" to 49021, "name" to "internal-security-scanner", "visibility" to "private"),
-                            mapOf("id" to 22891, "name" to "corporate-dashboard-v2", "visibility" to "internal")
+                    val glAcc = gitlabAccounts.value.firstOrNull { it.isEnabled && it.token.isNotBlank() }
+                        ?: gitlabAccounts.value.firstOrNull { it.token.isNotBlank() }
+                    val token = glAcc?.token ?: ""
+                    val instanceUrl = glAcc?.instanceUrl ?: "https://gitlab.com"
+                    val membership = args["membership"]?.toString() != "false"
+                    if (token.isNotBlank()) {
+                        gitService.listGitlabProjects(instanceUrl, token, membership)
+                    } else {
+                        mapOf(
+                            "success" to true,
+                            "warning" to "Sin token GitLab configurado. Mostrando proyectos de prueba.",
+                            "instance_url" to instanceUrl,
+                            "projects" to listOf(
+                                mapOf("id" to 49021, "name" to "internal-security-scanner", "visibility" to "private"),
+                                mapOf("id" to 22891, "name" to "corporate-dashboard-v2", "visibility" to "internal")
+                            )
                         )
-                    )
+                    }
                 }
                 "create_gitlab_issue" -> {
+                    val glAcc = gitlabAccounts.value.firstOrNull { it.isEnabled && it.token.isNotBlank() }
+                        ?: gitlabAccounts.value.firstOrNull { it.token.isNotBlank() }
+                    val token = glAcc?.token ?: ""
+                    val instanceUrl = glAcc?.instanceUrl ?: "https://gitlab.com"
                     val projectId = args["projectId"]?.toString() ?: ""
                     val title = args["title"]?.toString() ?: ""
                     val desc = args["description"]?.toString() ?: ""
-                    mapOf(
-                        "success" to true,
-                        "projectId" to projectId,
-                        "issue_id" to 9951,
-                        "title" to title,
-                        "description" to desc
-                    )
+                    if (token.isNotBlank() && projectId.isNotBlank() && title.isNotBlank()) {
+                        gitService.createGitlabIssue(instanceUrl, token, projectId, title, desc)
+                    } else {
+                        mapOf(
+                            "success" to true,
+                            "projectId" to projectId,
+                            "issue_id" to 9951,
+                            "title" to title,
+                            "description" to desc,
+                            "note" to "Modo simulación (agrega un token de GitLab en el botón + para crear en tu GitLab real)."
+                        )
+                    }
                 }
                 "web_search" -> {
                     val query = args["query"]?.toString() ?: ""
@@ -1477,23 +1558,43 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
             val endpoint = activeProf?.apiEndpoint?.ifBlank { null }
             val modelName = activeProf?.modelName?.ifBlank { null }
 
-            val nextResponse = llmService.resolveLlm(
-                history = conversation,
-                provider = provider,
-                customApiKey = key,
-                apiEndpoint = endpoint,
-                modelName = modelName,
-                sessionId = sessionId,
-                mcpEmailEnabled = mcpEmailEnabled,
-                mcpGithubEnabled = mcpGithubEnabled,
-                mcpGitlabEnabled = mcpGitlabEnabled,
-                githubUsername = githubUsername,
-                gitlabUrl = gitlabUrl,
-                internetSearchEnabled = internetSearchEnabled,
-                searchProvider = searchProvider
-            )
-            
-            processLlmResponse(sessionId, nextResponse, depth = depth + 1)
+            val isGeminiProvider = provider.lowercase().contains("gemini")
+            val isKeyMissing = if (isGeminiProvider) {
+                val rk = if (!key.isNullOrBlank()) key else com.example.BuildConfig.GEMINI_API_KEY
+                LlmService.isKeyInvalidOrPlaceholder(rk)
+            } else {
+                key.isNullOrBlank()
+            }
+
+            if (isKeyMissing) {
+                // In offline or local assistant mode, generate formatted summary directly from tool results
+                val directText = formatOfflineToolSummary(name, resultObject)
+                repository.addMessage(
+                    ChatMessage(
+                        sessionId = sessionId,
+                        sender = "ai",
+                        text = directText
+                    )
+                )
+            } else {
+                val nextResponse = llmService.resolveLlm(
+                    history = conversation,
+                    provider = provider,
+                    customApiKey = key,
+                    apiEndpoint = endpoint,
+                    modelName = modelName,
+                    sessionId = sessionId,
+                    mcpEmailEnabled = mcpEmailEnabled,
+                    mcpGithubEnabled = mcpGithubEnabled,
+                    mcpGitlabEnabled = mcpGitlabEnabled,
+                    githubUsername = githubUsername,
+                    gitlabUrl = gitlabUrl,
+                    internetSearchEnabled = internetSearchEnabled,
+                    searchProvider = searchProvider
+                )
+                
+                processLlmResponse(sessionId, nextResponse, depth = depth + 1)
+            }
             
             // Auto refresh inbox tabs
             if (mcpEmailEnabled && name.contains("email")) {
@@ -1511,6 +1612,156 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
             )
         } finally {
             _isLlmLoading.value = false
+        }
+    }
+
+    private fun formatOfflineToolSummary(name: String, result: Map<String, Any?>): String {
+        return when (name) {
+            "list_inbox" -> {
+                val unread = (result["unread_count"] as? Number)?.toInt() ?: 0
+                val total = (result["total_count"] as? Number)?.toInt() ?: 0
+                val account = result["account"]?.toString() ?: "tu cuenta"
+                val isLive = result["is_live_imap"] as? Boolean ?: false
+                val emails = result["emails"] as? List<Map<String, Any?>> ?: emptyList()
+
+                buildString {
+                    append("📬 **Bandeja de Entrada** (${if (isLive) "IMAP en Vivo" else "Sincronización Local"})\n\n")
+                    append("• **Cuenta:** `$account`\n")
+                    append("• **Total de mensajes:** $total\n")
+                    append("• **Correos sin leer:** **$unread**\n\n")
+                    if (emails.isEmpty()) {
+                        append("Tu bandeja de entrada está al día. No hay mensajes nuevos.")
+                    } else {
+                        append("### Mensajes Recientes:\n")
+                        emails.forEachIndexed { i, em ->
+                            val subject = em["subject"]?.toString() ?: "(Sin Asunto)"
+                            val sender = em["sender"]?.toString() ?: "Desconocido"
+                            val date = em["date"]?.toString() ?: ""
+                            val isRead = em["isRead"] == true
+                            val readBadge = if (isRead) "✓ Leído" else "🔵 **Nuevo**"
+                            append("${i + 1}. **$subject** — $readBadge\n")
+                            append("   *De:* `$sender` ${if (date.isNotBlank()) "• $date" else ""}\n\n")
+                        }
+                    }
+                }
+            }
+            "list_github_repositories" -> {
+                val u = result["username"]?.toString() ?: ""
+                val warning = result["warning"]?.toString()
+                val repos = result["repositories"] as? List<Map<String, Any?>> ?: emptyList()
+                buildString {
+                    append("🐙 **Repositorios de GitHub** (`$u`)\n\n")
+                    if (!warning.isNullOrBlank()) {
+                        append("ℹ️ *$warning*\n\n")
+                    }
+                    repos.forEachIndexed { i, r ->
+                        val n = r["name"]?.toString() ?: ""
+                        val stars = r["stars"] ?: 0
+                        val lang = r["language"]?.toString() ?: "Code"
+                        val desc = r["description"]?.toString() ?: ""
+                        append("${i + 1}. **$n** (⭐ $stars • $lang)\n")
+                        if (desc.isNotBlank()) append("   $desc\n\n")
+                    }
+                }
+            }
+            "list_github_issues" -> {
+                val owner = result["owner"]?.toString() ?: ""
+                val repo = result["repo"]?.toString() ?: ""
+                val issues = result["issues"] as? List<Map<String, Any?>> ?: emptyList()
+                buildString {
+                    append("🐙 **Issues de GitHub** (`$owner/$repo`)\n\n")
+                    if (issues.isEmpty()) {
+                        append("No hay issues abiertas en este repositorio.")
+                    } else {
+                        issues.forEach { iss ->
+                            val num = iss["number"] ?: 0
+                            val title = iss["title"]?.toString() ?: ""
+                            val author = iss["author"]?.toString() ?: ""
+                            append("• **#$num**: $title *(por @$author)*\n")
+                        }
+                    }
+                }
+            }
+            "list_gitlab_projects" -> {
+                val projects = result["projects"] as? List<Map<String, Any?>> ?: emptyList()
+                val warning = result["warning"]?.toString()
+                buildString {
+                    append("🦊 **Proyectos de GitLab**\n\n")
+                    if (!warning.isNullOrBlank()) append("ℹ️ *$warning*\n\n")
+                    projects.forEach { p ->
+                        val n = p["name"]?.toString() ?: ""
+                        val id = p["id"] ?: ""
+                        val vis = p["visibility"]?.toString() ?: "private"
+                        append("• **$n** (ID: `$id`, visibilidad: *$vis*)\n")
+                    }
+                }
+            }
+            "search_emails" -> {
+                val emails = result["emails"] as? List<Map<String, Any?>> ?: emptyList()
+                buildString {
+                    append("🔍 **Resultados de Búsqueda en Correos**\n\n")
+                    if (emails.isEmpty()) {
+                        append("No se encontraron correos que coincidan con la búsqueda.")
+                    } else {
+                        emails.forEachIndexed { i, em ->
+                            val subject = em["subject"]?.toString() ?: "(Sin Asunto)"
+                            val sender = em["sender"]?.toString() ?: "Desconocido"
+                            val date = em["date"]?.toString() ?: ""
+                            append("${i + 1}. **$subject**\n")
+                            append("   *De:* `$sender` ${if (date.isNotBlank()) "• $date" else ""}\n\n")
+                        }
+                    }
+                }
+            }
+            "read_email" -> {
+                val em = result["email"] as? Map<String, Any?>
+                if (em != null) {
+                    val subject = em["subject"]?.toString() ?: "(Sin Asunto)"
+                    val sender = em["sender"]?.toString() ?: "Desconocido"
+                    val date = em["date"]?.toString() ?: ""
+                    val body = em["body"]?.toString() ?: em["snippet"]?.toString() ?: ""
+                    buildString {
+                        append("📧 **$subject**\n")
+                        append("• **De:** `$sender`\n")
+                        if (date.isNotBlank()) append("• **Fecha:** $date\n")
+                        append("\n---\n\n")
+                        append(body)
+                    }
+                } else {
+                    "No se encontró el mensaje solicitado."
+                }
+            }
+            "send_email" -> {
+                val to = result["destination"]?.toString() ?: ""
+                "✉️ Correo enviado exitosamente a `$to`."
+            }
+            "reply_to_email" -> {
+                val id = result["repliedTo"]?.toString() ?: ""
+                "↩️ Respuesta enviada con éxito para el mensaje `$id`."
+            }
+            "forward_email" -> {
+                val to = result["forwardedTo"]?.toString() ?: ""
+                "↪️ Correo reenviado correctamente a `$to`."
+            }
+            "mark_as_read" -> {
+                val id = result["id"]?.toString() ?: ""
+                "✓ Correo `$id` marcado como leído."
+            }
+            "mark_as_unread" -> {
+                val id = result["id"]?.toString() ?: ""
+                "🔵 Correo `$id` marcado como no leído."
+            }
+            "archive_email" -> {
+                val id = result["id"]?.toString() ?: ""
+                "📦 Correo `$id` archivado con éxito."
+            }
+            "delete_email" -> {
+                val id = result["id"]?.toString() ?: ""
+                "🗑️ Correo `$id` movido a la papelera."
+            }
+            else -> {
+                "✅ Tarea `$name` completada con éxito."
+            }
         }
     }
 
@@ -2037,7 +2288,12 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun attachCustomFile(name: String) {
-        _attachedImage.value = name
+        val type = when {
+            name.startsWith("Cámara") -> "camera"
+            name.startsWith("Galería") -> "image"
+            else -> "file"
+        }
+        addAttachment(name, type)
     }
 
     // Google Play Data Protection Policy: Complete user data reset / account deletion

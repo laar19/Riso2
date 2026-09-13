@@ -23,6 +23,10 @@ class RisoRepository(private val risoDao: RisoDao) {
         risoDao.updateSessionTitle(sessionId, title)
     }
 
+    suspend fun updateSessionPinned(sessionId: String, isPinned: Boolean) {
+        risoDao.updateSessionPinned(sessionId, isPinned)
+    }
+
     suspend fun deleteSession(sessionId: String) {
         risoDao.deleteMessagesBySessionId(sessionId)
         risoDao.deleteSessionById(sessionId)
@@ -30,6 +34,10 @@ class RisoRepository(private val risoDao: RisoDao) {
 
     suspend fun getMessageCountForSession(sessionId: String): Int {
         return risoDao.getMessageCountForSession(sessionId)
+    }
+
+    suspend fun getMessagesListForSession(sessionId: String): List<ChatMessage> {
+        return risoDao.getMessagesListForSession(sessionId)
     }
 
     suspend fun deleteEmptySessions() {

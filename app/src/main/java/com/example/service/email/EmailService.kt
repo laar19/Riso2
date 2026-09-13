@@ -23,14 +23,23 @@ data class RisoEmail(
 )
 
 data class EmailAccount(
-    val id: String,
+    val id: String = java.util.UUID.randomUUID().toString(),
     val emailAddress: String,
     val imapServer: String,
     val imapPort: String = "993",
-    val smtpServer: String,
+    val smtpServer: String = "smtp.gmail.com",
     val smtpPort: String = "587",
     val passwordVal: String,
     val isEnabled: Boolean = true
+)
+
+data class InboxSummary(
+    val emails: List<RisoEmail>,
+    val totalCount: Int,
+    val unreadCount: Int,
+    val accountEmail: String,
+    val isLiveImap: Boolean,
+    val errorMessage: String? = null
 )
 
 class EmailService(private val repository: RisoRepository) {
@@ -47,24 +56,33 @@ class EmailService(private val repository: RisoRepository) {
                 put("mail.imaps.host", acc.imapServer.ifBlank { "imap.gmail.com" })
                 put("mail.imaps.port", acc.imapPort.ifBlank { "993" })
                 put("mail.imaps.ssl.enable", "true")
-                put("mail.imaps.connectiontimeout", "5000")
-                put("mail.imaps.timeout", "5000")
+                put("mail.imaps.ssl.trust", "*")
+                put("mail.imaps.connectiontimeout", "8000")
+                put("mail.imaps.timeout", "8000")
             }
             val session = Session.getInstance(props, null)
             val store = session.getStore("imaps")
             store.connect(acc.imapServer.ifBlank { "imap.gmail.com" }, acc.emailAddress, acc.passwordVal)
             val inbox = store.getFolder("INBOX")
-            val count = try {
+            var count = 0
+            var unread = 0
+            try {
                 inbox.open(Folder.READ_ONLY)
-                val c = inbox.messageCount
+                count = inbox.messageCount
+                val uc = inbox.unreadMessageCount
+                unread = if (uc >= 0) uc else {
+                    val unreadTerm = javax.mail.search.FlagTerm(Flags(Flags.Flag.SEEN), false)
+                    inbox.search(unreadTerm).size
+                }
                 inbox.close(false)
-                c
-            } catch (e: Exception) { 0 }
+            } catch (e: Exception) {
+                Log.w(TAG, "Notice reading inbox folder: ${e.message}")
+            }
             store.close()
-            Pair(true, "Conectado ($count mensajes)")
+            Pair(true, "Conectado ($count mensajes, $unread sin leer)")
         } catch (e: Exception) {
-            val msg = e.localizedMessage ?: "Fallo de autenticación IMAP"
-            Pair(false, if (msg.length > 50) msg.take(50) + "..." else msg)
+            val msg = e.localizedMessage ?: e.message ?: "Fallo de autenticación IMAP"
+            Pair(false, msg)
         }
     }
 
@@ -72,21 +90,33 @@ class EmailService(private val repository: RisoRepository) {
         val activeId = repository.getSetting("active_email_account_id") ?: ""
         val accountsJson = repository.getSetting("email_accounts_json") ?: ""
         
-        if (activeId.isNotBlank() && accountsJson.isNotBlank()) {
+        if (accountsJson.isNotBlank()) {
             try {
                 val array = org.json.JSONArray(accountsJson)
-                for (i in 0 until array.length()) {
-                     val obj = array.getJSONObject(i)
-                     if (obj.optString("id") == activeId || obj.optString("emailAddress") == activeId) {
-                         return mapOf(
-                             "email_address" to obj.optString("emailAddress"),
-                             "email_password" to obj.optString("passwordVal"),
-                             "imap_server" to obj.optString("imapServer"),
-                             "imap_port" to obj.optString("imapPort", "993"),
-                             "smtp_server" to obj.optString("smtpServer"),
-                             "smtp_port" to obj.optString("smtpPort", "587")
-                         )
-                     }
+                if (array.length() > 0) {
+                    for (i in 0 until array.length()) {
+                        val obj = array.getJSONObject(i)
+                        if (obj.optString("id") == activeId || obj.optString("emailAddress") == activeId) {
+                            return mapOf(
+                                "email_address" to obj.optString("emailAddress"),
+                                "email_password" to obj.optString("passwordVal"),
+                                "imap_server" to obj.optString("imapServer"),
+                                "imap_port" to obj.optString("imapPort", "993"),
+                                "smtp_server" to obj.optString("smtpServer"),
+                                "smtp_port" to obj.optString("smtpPort", "587")
+                            )
+                        }
+                    }
+                    // Fallback to first configured account
+                    val first = array.getJSONObject(0)
+                    return mapOf(
+                        "email_address" to first.optString("emailAddress"),
+                        "email_password" to first.optString("passwordVal"),
+                        "imap_server" to first.optString("imapServer"),
+                        "imap_port" to first.optString("imapPort", "993"),
+                        "smtp_server" to first.optString("smtpServer"),
+                        "smtp_port" to first.optString("smtpPort", "587")
+                    )
                 }
             } catch (e: Exception) {
                 Log.e("EmailService", "Error parsing email_accounts_json", e)
@@ -203,24 +233,46 @@ class EmailService(private val repository: RisoRepository) {
         }
     }
 
-    // List recent emails (First of the 10 core functions)
-    suspend fun listInbox(limit: Int = 10): List<RisoEmail> = withContext(Dispatchers.IO) {
+    // Fetch inbox summary with counts and filter support
+    suspend fun fetchInboxSummary(limit: Int = 10, filter: String? = null): InboxSummary = withContext(Dispatchers.IO) {
         val creds = getActiveCredentials()
         val imapServer = creds["imap_server"] ?: ""
+        val imapPort = creds["imap_port"] ?: "993"
         val email = creds["email_address"] ?: ""
         val password = creds["email_password"] ?: ""
 
         if (imapServer.isBlank() || email.isBlank() || password.isBlank()) {
-            Log.d(TAG, "[MOCK] Listing inbox")
-            return@withContext mockEmails.take(limit)
+            Log.d(TAG, "[MOCK] Listing inbox summary")
+            val isUnreadOnly = filter?.contains("unread", ignoreCase = true) == true
+            val filtered = if (isUnreadOnly) mockEmails.filter { !it.isRead } else mockEmails
+            return@withContext InboxSummary(
+                emails = filtered.take(limit),
+                totalCount = mockEmails.size,
+                unreadCount = mockEmails.count { !it.isRead },
+                accountEmail = if (email.isNotBlank()) email else "usuario@riso.local",
+                isLiveImap = false
+            )
         }
 
         try {
-            return@withContext fetchEmailsFromImap(imapServer, email, password, "INBOX", limit)
+            return@withContext fetchEmailsFromImapDetailed(imapServer, email, password, imapPort, "INBOX", limit, filter)
         } catch (e: Exception) {
-            Log.e(TAG, "Error listing inbox via IMAP, falling back to mock: ${e.message}", e)
-            return@withContext mockEmails.take(limit)
+            val errDetail = e.localizedMessage ?: e.message ?: "Error de conexión"
+            Log.e(TAG, "Error listing inbox via IMAP for $email ($imapServer): $errDetail", e)
+            return@withContext InboxSummary(
+                emails = emptyList(),
+                totalCount = 0,
+                unreadCount = 0,
+                accountEmail = email,
+                isLiveImap = false,
+                errorMessage = "⚠️ No se pudo conectar a IMAP ($imapServer): $errDetail. Verifica tu contraseña de aplicación y que IMAP esté habilitado."
+            )
         }
+    }
+
+    // List recent emails (First of the 10 core functions)
+    suspend fun listInbox(limit: Int = 10): List<RisoEmail> = withContext(Dispatchers.IO) {
+        fetchInboxSummary(limit).emails
     }
 
     // Search emails by query (Second of core functions)
@@ -437,33 +489,58 @@ class EmailService(private val repository: RisoRepository) {
     }
 
     // Helper functions for actual IMAP connection
-    private fun fetchEmailsFromImap(
+    private fun fetchEmailsFromImapDetailed(
         host: String,
         user: String,
         pass: String,
+        port: String = "993",
         folderName: String = "INBOX",
-        limit: Int = 10
-    ): List<RisoEmail> {
+        limit: Int = 10,
+        filter: String? = null
+    ): InboxSummary {
         val properties = Properties().apply {
             put("mail.store.protocol", "imaps")
             put("mail.imaps.host", host)
-            put("mail.imaps.port", "993")
+            put("mail.imaps.port", port.ifBlank { "993" })
+            put("mail.imaps.ssl.enable", "true")
+            put("mail.imaps.ssl.trust", "*")
+            put("mail.imaps.connectiontimeout", "10000")
+            put("mail.imaps.timeout", "10000")
         }
 
-        val session = Session.getDefaultInstance(properties, null)
+        val session = Session.getInstance(properties, null)
         val store = session.getStore("imaps")
         store.connect(host, user, pass)
 
         val inbox = store.getFolder(folderName)
         inbox.open(Folder.READ_ONLY)
 
-        val count = inbox.messageCount
-        val start = (count - limit + 1).coerceAtLeast(1)
-        val end = count
+        val totalCount = inbox.messageCount
+        val rawUnread = inbox.unreadMessageCount
+        val unreadCount = if (rawUnread >= 0) {
+            rawUnread
+        } else {
+            try {
+                val unreadTerm = javax.mail.search.FlagTerm(Flags(Flags.Flag.SEEN), false)
+                inbox.search(unreadTerm).size
+            } catch (e: Exception) {
+                0
+            }
+        }
 
-        val messages = if (count > 0) inbox.getMessages(start, end) else emptyArray()
+        val isUnreadFilter = filter?.contains("unread", ignoreCase = true) == true
+        val messages = if (isUnreadFilter) {
+            val unreadTerm = javax.mail.search.FlagTerm(Flags(Flags.Flag.SEEN), false)
+            val unreadList = inbox.search(unreadTerm)
+            val start = (unreadList.size - limit).coerceAtLeast(0)
+            if (unreadList.isNotEmpty()) unreadList.slice(start until unreadList.size).toTypedArray() else emptyArray()
+        } else {
+            val start = (totalCount - limit + 1).coerceAtLeast(1)
+            val end = totalCount
+            if (totalCount > 0) inbox.getMessages(start, end) else emptyArray()
+        }
+
         val risoEmails = mutableListOf<RisoEmail>()
-
         for (i in messages.indices.reversed()) {
             val message = messages[i]
             val content = try {
@@ -487,7 +564,23 @@ class EmailService(private val repository: RisoRepository) {
 
         inbox.close(false)
         store.close()
-        return risoEmails
+        return InboxSummary(
+            emails = risoEmails,
+            totalCount = totalCount,
+            unreadCount = unreadCount,
+            accountEmail = user,
+            isLiveImap = true
+        )
+    }
+
+    private fun fetchEmailsFromImap(
+        host: String,
+        user: String,
+        pass: String,
+        folderName: String = "INBOX",
+        limit: Int = 10
+    ): List<RisoEmail> {
+        return fetchEmailsFromImapDetailed(host = host, user = user, pass = pass, port = "993", folderName = folderName, limit = limit, filter = null).emails
     }
 
     private fun setImapMessageFlag(

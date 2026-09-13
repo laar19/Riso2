@@ -21,6 +21,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -55,6 +56,7 @@ import kotlinx.coroutines.launch
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import com.example.data.model.ChatMessage
+import com.example.data.model.ChatSession
 import com.example.data.model.PendingAction
 import com.example.data.model.GithubAccount
 import com.example.data.model.GitlabAccount
@@ -64,6 +66,40 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import android.net.Uri
 import android.graphics.Bitmap
+import android.content.ClipboardManager
+import android.content.ClipData
+import android.content.Context
+import android.content.Intent
+import android.widget.Toast
+
+fun safeCopyText(context: Context, label: String, text: String, toastMsg: String = "Copiado al portapapeles") {
+    try {
+        val clip = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+        if (clip != null) {
+            clip.setPrimaryClip(ClipData.newPlainText(label, text))
+            Toast.makeText(context, toastMsg, Toast.LENGTH_SHORT).show()
+        }
+    } catch (e: Exception) {
+        android.util.Log.e("RisoScreens", "Error al copiar texto", e)
+    }
+}
+
+fun safeShareText(context: Context, text: String, chooserTitle: String) {
+    try {
+        val sendIntent = Intent().apply {
+            action = Intent.ACTION_SEND
+            putExtra(Intent.EXTRA_TEXT, text)
+            type = "text/plain"
+        }
+        val chooserIntent = Intent.createChooser(sendIntent, chooserTitle).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(chooserIntent)
+    } catch (e: Exception) {
+        android.util.Log.e("RisoScreens", "Error al compartir", e)
+        Toast.makeText(context, "No se encontró una aplicación para compartir", Toast.LENGTH_SHORT).show()
+    }
+}
 
 fun Modifier.simpleVerticalScrollbar(
     state: LazyListState,
@@ -126,6 +162,43 @@ fun RisoMainScreen(
     fun t(key: String): String = L10n.t(key, isEn)
     
     val activeAccount = emailAccounts.find { it.id == activeEmailAccountId }
+    val context = LocalContext.current
+    var renamingSession by remember { mutableStateOf<ChatSession?>(null) }
+    var renamingTitleText by remember { mutableStateOf("") }
+    
+    if (renamingSession != null) {
+        AlertDialog(
+            onDismissRequest = { renamingSession = null },
+            title = { Text("Renombrar chat", fontWeight = FontWeight.Bold, fontSize = 16.sp) },
+            text = {
+                OutlinedTextField(
+                    value = renamingTitleText,
+                    onValueChange = { renamingTitleText = it },
+                    label = { Text("Título") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val target = renamingSession
+                        if (target != null && renamingTitleText.isNotBlank()) {
+                            viewModel.renameSession(target.id, renamingTitleText.trim())
+                        }
+                        renamingSession = null
+                    }
+                ) {
+                    Text("Guardar")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { renamingSession = null }) {
+                    Text("Cancelar")
+                }
+            }
+        )
+    }
     
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -212,7 +285,7 @@ fun RisoMainScreen(
                             .verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        sessions.forEach { session ->
+                        sessions.sortedWith(compareByDescending<com.example.data.model.ChatSession> { it.isPinned }.thenByDescending { it.createdAt }).forEach { session ->
                             val isSelected = session.id == selectedSessionId && currentTab == "chat"
                             Row(
                                 modifier = Modifier
@@ -232,8 +305,13 @@ fun RisoMainScreen(
                                     verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier.weight(1f)
                                 ) {
-                                    Text("💬", fontSize = 14.sp)
-                                    Spacer(modifier = Modifier.width(10.dp))
+                                    if (session.isPinned) {
+                                        Text("📌", fontSize = 12.sp)
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                    } else {
+                                        Text("💬", fontSize = 14.sp)
+                                        Spacer(modifier = Modifier.width(10.dp))
+                                    }
                                     Text(
                                         text = session.title ?: "Chat Riso",
                                         fontSize = 13.sp,
@@ -243,12 +321,31 @@ fun RisoMainScreen(
                                         overflow = TextOverflow.Ellipsis
                                     )
                                 }
-                                if (sessions.size > 1) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
                                     IconButton(
-                                        onClick = { viewModel.deleteSession(session.id) },
+                                        onClick = { viewModel.togglePinSession(session.id) },
                                         modifier = Modifier.size(24.dp)
                                     ) {
-                                        Text("🗑️", fontSize = 12.sp)
+                                        Text(if (session.isPinned) "📌" else "📍", fontSize = 12.sp)
+                                    }
+                                    Spacer(modifier = Modifier.width(2.dp))
+                                    IconButton(
+                                        onClick = {
+                                            renamingSession = session
+                                            renamingTitleText = session.title ?: ""
+                                        },
+                                        modifier = Modifier.size(24.dp)
+                                    ) {
+                                        Text("✏️", fontSize = 12.sp)
+                                    }
+                                    if (sessions.size > 1) {
+                                        Spacer(modifier = Modifier.width(2.dp))
+                                        IconButton(
+                                            onClick = { viewModel.deleteSession(session.id) },
+                                            modifier = Modifier.size(24.dp)
+                                        ) {
+                                            Text("🗑️", fontSize = 12.sp)
+                                        }
                                     }
                                 }
                             }
@@ -285,6 +382,7 @@ fun RisoMainScreen(
                     HorizontalDivider(color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.08f))
                     Spacer(modifier = Modifier.height(12.dp))
                     
+                    // Theme mode toggle
                     val themeMode = settings["theme_mode"] ?: "light"
                     Row(
                         modifier = Modifier
@@ -317,16 +415,6 @@ fun RisoMainScreen(
                                 modifier = Modifier.scale(0.8f)
                             )
                         }
-                    }
-                    
-                    if (activeAccount != null && activeAccount.emailAddress.isNotBlank() && !activeAccount.emailAddress.contains("riso.local", ignoreCase = true)) {
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = t("active_account") + activeAccount.emailAddress,
-                            fontSize = 10.5.sp,
-                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f),
-                            modifier = Modifier.padding(horizontal = 8.dp)
-                        )
                     }
                 }
             }
@@ -362,8 +450,31 @@ fun RisoMainScreen(
                     },
                     actions = {
                         if (currentTab == "chat") {
-                            IconButton(onClick = { viewModel.createNewSession() }) {
-                                Icon(Icons.Default.Add, contentDescription = "Nueva conversación")
+                            val curSession = sessions.find { it.id == selectedSessionId }
+                            if (curSession != null) {
+                                IconButton(
+                                    onClick = { viewModel.togglePinSession(curSession.id) },
+                                    modifier = Modifier.size(36.dp)
+                                ) {
+                                    Text(if (curSession.isPinned) "📌" else "📍", fontSize = 16.sp)
+                                }
+                                IconButton(
+                                    onClick = {
+                                        coroutineScope.launch {
+                                            val exportText = viewModel.getSessionExportText(curSession.id)
+                                            if (exportText.isNotBlank()) {
+                                                safeCopyText(context, "Conversación Riso", exportText, "Conversación copiada al portapapeles")
+                                                safeShareText(context, exportText, "Exportar conversación")
+                                            }
+                                        }
+                                    },
+                                    modifier = Modifier.size(36.dp)
+                                ) {
+                                    Icon(Icons.Default.Share, contentDescription = "Exportar conversación completa", modifier = Modifier.size(18.dp))
+                                }
+                            }
+                            IconButton(onClick = { viewModel.createNewSession() }, modifier = Modifier.size(36.dp)) {
+                                Icon(Icons.Default.Add, contentDescription = "Nueva conversación", modifier = Modifier.size(20.dp))
                             }
                         }
                     },
@@ -392,6 +503,7 @@ fun RisoMainScreen(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RisoChatScreen(viewModel: RisoViewModel) {
+    val selectedSessionId by viewModel.selectedSessionId.collectAsStateWithLifecycle()
     val messages by viewModel.currentMessages.collectAsStateWithLifecycle()
     val isLlmLoading by viewModel.isLlmLoading.collectAsStateWithLifecycle()
     val planningMode by viewModel.planningMode.collectAsStateWithLifecycle()
@@ -434,6 +546,8 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
     val isTranscribingAudio by viewModel.isTranscribingAudio.collectAsStateWithLifecycle()
     val recordingFeedback by viewModel.recordingFeedback.collectAsStateWithLifecycle()
     val attachedImage by viewModel.attachedImage.collectAsStateWithLifecycle()
+    val attachments by viewModel.attachments.collectAsStateWithLifecycle()
+    val loadingStatusText by viewModel.loadingStatusText.collectAsStateWithLifecycle()
 
     val context = LocalContext.current
     var hasMicPermission by remember {
@@ -456,6 +570,9 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
     var textInput by remember { mutableStateOf("") }
     var showAttachMenu by remember { mutableStateOf(false) }
     var showModelSelector by remember { mutableStateOf(false) }
+    var isSelectionMode by remember { mutableStateOf(false) }
+    val selectedMessageIds = remember { mutableStateListOf<String>() }
+    var editingMessageText by remember { mutableStateOf<String?>(null) }
 
     // Launcher integrations for physical device testing as requested
     val galleryLauncher = rememberLauncherForActivityResult(
@@ -495,6 +612,13 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
         if (messages.isNotEmpty()) {
             listState.animateScrollToItem(messages.size - 1)
         }
+    }
+
+    // Reset selection and message editor on session change
+    LaunchedEffect(selectedSessionId) {
+        isSelectionMode = false
+        selectedMessageIds.clear()
+        editingMessageText = null
     }
 
     Column(
@@ -698,6 +822,80 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
             }
         }
 
+        // Multi-selection bar for exporting selected messages
+        if (isSelectionMode) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(
+                            onClick = {
+                                isSelectionMode = false
+                                selectedMessageIds.clear()
+                            },
+                            modifier = Modifier.size(28.dp)
+                        ) {
+                            Icon(Icons.Default.Close, contentDescription = "Cancelar selección", modifier = Modifier.size(16.dp))
+                        }
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "${selectedMessageIds.size} seleccionados",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        TextButton(
+                            onClick = {
+                                if (selectedMessageIds.size == messages.size) {
+                                    selectedMessageIds.clear()
+                                } else {
+                                    selectedMessageIds.clear()
+                                    selectedMessageIds.addAll(messages.map { it.id })
+                                }
+                            },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                if (selectedMessageIds.size == messages.size) "Deseleccionar" else "Todos",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Button(
+                            onClick = {
+                                if (selectedMessageIds.isNotEmpty()) {
+                                    val textToExport = viewModel.formatSelectedMessagesExport(selectedMessageIds.toSet())
+                                    safeCopyText(context, "Mensajes Riso", textToExport, "${selectedMessageIds.size} mensajes copiados al portapapeles")
+                                    safeShareText(context, textToExport, "Exportar mensajes")
+                                    isSelectionMode = false
+                                    selectedMessageIds.clear()
+                                }
+                            },
+                            enabled = selectedMessageIds.isNotEmpty(),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text("📤 Exportar", fontSize = 11.sp)
+                        }
+                    }
+                }
+            }
+        }
+
         // Chat Conversation window
         LazyColumn(
             state = listState,
@@ -712,13 +910,39 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
                     message = msg,
                     pendingActions = pendingActions,
                     onApprove = { viewModel.approveAction(it) },
-                    onReject = { viewModel.rejectAction(it) }
+                    onReject = { viewModel.rejectAction(it) },
+                    isSelectionMode = isSelectionMode,
+                    isSelected = selectedMessageIds.contains(msg.id),
+                    onToggleSelect = {
+                        if (selectedMessageIds.contains(msg.id)) {
+                            selectedMessageIds.remove(msg.id)
+                            if (selectedMessageIds.isEmpty()) isSelectionMode = false
+                        } else {
+                            selectedMessageIds.add(msg.id)
+                        }
+                    },
+                    onStartSelection = {
+                        isSelectionMode = true
+                        if (!selectedMessageIds.contains(msg.id)) {
+                            selectedMessageIds.add(msg.id)
+                        }
+                    },
+                    onCopyMessage = {
+                        safeCopyText(context, "Mensaje Riso", msg.text, "Mensaje copiado al portapapeles")
+                    },
+                    onEditMessage = {
+                        editingMessageText = msg.text
+                        textInput = msg.text
+                    },
+                    onShareMessage = {
+                        safeShareText(context, msg.text, "Compartir mensaje")
+                    }
                 )
             }
 
             if (isLlmLoading) {
                 item {
-                    LlmStreamingLoader()
+                    LlmStreamingLoader(loadingStatusText)
                 }
             }
         }
@@ -779,47 +1003,88 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
                             color = MaterialTheme.colorScheme.error
                         )
                     }
+                } else if (!isTranscribingAudio) {
+                    IconButton(
+                        onClick = { viewModel.clearRecordingFeedback() },
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = "Cerrar",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
                 }
             }
         }
 
-        // Image Attachment Thumbnail Preview Box
-        if (attachedImage != null) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
+        // Attachment Preview Chips Box
+        if (attachments.isNotEmpty() || attachedImage != null) {
+            LazyRow(
                 modifier = Modifier
-                    .padding(horizontal = 12.dp, vertical = 4.dp)
-                    .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(10.dp))
-                    .padding(horizontal = 10.dp, vertical = 6.dp)
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text("📷", fontSize = 14.sp)
-                Spacer(modifier = Modifier.width(6.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Archivo: $attachedImage.png",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Text(
-                        text = when(attachedImage) {
-                            "recibo" -> "Recibo de Compra"
-                            "menu" -> "Menú de Restaurant"
-                            else -> "Gráfico Analítico Q3"
-                        },
-                        fontSize = 10.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                    )
+                if (attachments.isNotEmpty()) {
+                    items(attachments, key = { it.id }) { att ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(10.dp))
+                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            Text(if (att.type == "camera" || att.type == "image") "📷" else "📎", fontSize = 13.sp)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = att.name,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.widthIn(max = 140.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Remover archivo",
+                                tint = Color.Red,
+                                modifier = Modifier
+                                    .size(14.dp)
+                                    .clickable { viewModel.removeAttachment(att.id) }
+                            )
+                        }
+                    }
+                } else if (attachedImage != null) {
+                    item {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(10.dp))
+                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            Text("📷", fontSize = 13.sp)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Archivo: $attachedImage.png",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Remover archivo",
+                                tint = Color.Red,
+                                modifier = Modifier
+                                    .size(14.dp)
+                                    .clickable { viewModel.attachSampleImage(null) }
+                            )
+                        }
+                    }
                 }
-                Spacer(modifier = Modifier.width(12.dp))
-                Icon(
-                    imageVector = Icons.Default.Close,
-                    contentDescription = "Remover archivo",
-                    tint = Color.Red,
-                    modifier = Modifier
-                        .size(16.dp)
-                        .clickable { viewModel.attachSampleImage(null) }
-                )
             }
         }
 
@@ -918,6 +1183,39 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
             }
         }
 
+        // Banner if editing a message to resend
+        if (editingMessageText != null) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 2.dp)
+                    .background(MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.85f), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 10.dp, vertical = 5.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "✏️ Editando mensaje para reenviar",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer
+                    )
+                }
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = "Cancelar edición",
+                    modifier = Modifier
+                        .size(16.dp)
+                        .clickable {
+                            editingMessageText = null
+                            textInput = ""
+                        },
+                    tint = MaterialTheme.colorScheme.onTertiaryContainer
+                )
+            }
+        }
+
         // Bottom Input Row - clean 4-element layout matching modern compact distribution
         Row(
             modifier = Modifier
@@ -939,7 +1237,7 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
             }
 
             // Chat input text field
-            val canSend = textInput.isNotBlank() || attachedImage != null
+            val canSend = textInput.isNotBlank() || attachments.isNotEmpty() || attachedImage != null
             OutlinedTextField(
                 value = textInput,
                 onValueChange = { textInput = it },
@@ -960,6 +1258,7 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
                     if (canSend) {
                         viewModel.sendMessage(textInput)
                         textInput = ""
+                        editingMessageText = null
                         keyboardController?.hide()
                     }
                 })
@@ -1015,6 +1314,7 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
                     if (canSend) {
                         viewModel.sendMessage(textInput)
                         textInput = ""
+                        editingMessageText = null
                         keyboardController?.hide()
                     }
                 },
@@ -1079,10 +1379,18 @@ fun ChatMessageItem(
     message: ChatMessage,
     pendingActions: List<PendingAction>,
     onApprove: (String) -> Unit,
-    onReject: (String) -> Unit
+    onReject: (String) -> Unit,
+    isSelectionMode: Boolean = false,
+    isSelected: Boolean = false,
+    onToggleSelect: () -> Unit = {},
+    onStartSelection: () -> Unit = {},
+    onCopyMessage: () -> Unit = {},
+    onEditMessage: () -> Unit = {},
+    onShareMessage: () -> Unit = {}
 ) {
     val isUser = message.sender == "user"
     val isSystem = message.sender == "system"
+    var showMenu by remember { mutableStateOf(false) }
 
     if (isSystem) {
         Box(
@@ -1106,12 +1414,24 @@ fun ChatMessageItem(
         }
     } else {
         Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(enabled = isSelectionMode) { onToggleSelect() }
+                .padding(vertical = 2.dp),
+            horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
+            verticalAlignment = Alignment.CenterVertically
         ) {
+            if (isSelectionMode && !isUser) {
+                Checkbox(
+                    checked = isSelected,
+                    onCheckedChange = { onToggleSelect() },
+                    modifier = Modifier.padding(end = 4.dp)
+                )
+            }
+
             Box(
                 modifier = Modifier
-                    .fillMaxWidth()
+                    .weight(1f, fill = false)
                     .wrapContentWidth(if (isUser) Alignment.End else Alignment.Start)
             ) {
                 Card(
@@ -1122,42 +1442,143 @@ fun ChatMessageItem(
                         bottomEnd = if (isUser) 2.dp else 14.dp
                     ),
                     colors = CardDefaults.cardColors(
-                        containerColor = if (isUser) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                        containerColor = if (isUser) {
+                            if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.85f)
+                            else MaterialTheme.colorScheme.primary
+                        } else {
+                            if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+                            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                        }
                     ),
-                    border = if (isUser) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.15f)),
-                    modifier = Modifier
-                        .widthIn(min = 36.dp, max = 295.dp)
-                        .padding(vertical = 1.dp)
+                    border = if (isSelected) {
+                        BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary)
+                    } else if (isUser) null else {
+                        BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
+                    },
+                    modifier = Modifier.widthIn(min = 40.dp, max = 320.dp)
                 ) {
-                    Column(modifier = Modifier.padding(horizontal = 11.dp, vertical = 7.dp)) {
-                        if (!isUser) {
-                            Row(
-                                modifier = Modifier.padding(bottom = 3.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(6.dp)
-                                        .clip(CircleShape)
-                                        .background(MaterialTheme.colorScheme.primary)
-                                )
-                                Spacer(modifier = Modifier.width(5.dp))
-                                Text(
-                                    text = "Riso Agent",
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    letterSpacing = 0.5.sp
-                                )
+                    Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                        // Header row with Sender info & More Menu
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 4.dp),
+                            horizontalArrangement = if (isUser) Arrangement.End else Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            if (!isUser) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(6.dp)
+                                            .clip(CircleShape)
+                                            .background(MaterialTheme.colorScheme.primary)
+                                    )
+                                    Spacer(modifier = Modifier.width(5.dp))
+                                    Text(
+                                        text = "Riso Agent",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        letterSpacing = 0.5.sp
+                                    )
+                                }
+                            }
+
+                            Box {
+                                IconButton(
+                                    onClick = { showMenu = true },
+                                    modifier = Modifier.size(20.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.MoreVert,
+                                        contentDescription = "Opciones de mensaje",
+                                        modifier = Modifier.size(13.dp),
+                                        tint = if (isUser) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.7f) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
+                                    )
+                                }
+                                DropdownMenu(
+                                    expanded = showMenu,
+                                    onDismissRequest = { showMenu = false }
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text("📋 Copiar mensaje", fontSize = 12.sp) },
+                                        onClick = {
+                                            showMenu = false
+                                            onCopyMessage()
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("✏️ Editar y reenviar", fontSize = 12.sp) },
+                                        onClick = {
+                                            showMenu = false
+                                            onEditMessage()
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("☑️ Seleccionar mensajes", fontSize = 12.sp) },
+                                        onClick = {
+                                            showMenu = false
+                                            onStartSelection()
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("📤 Compartir", fontSize = 12.sp) },
+                                        onClick = {
+                                            showMenu = false
+                                            onShareMessage()
+                                        }
+                                    )
+                                }
                             }
                         }
 
-                        Text(
+                        // Markdown formatted body
+                        MarkdownRenderer(
                             text = message.text,
-                            fontSize = 13.sp,
-                            color = if (isUser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
-                            lineHeight = 17.5.sp,
+                            textColor = if (isUser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+                            isUserMessage = isUser
                         )
+
+                        // Quick mini action bar under message
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 4.dp),
+                            horizontalArrangement = if (isUser) Arrangement.Start else Arrangement.End,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            IconButton(
+                                onClick = { onCopyMessage() },
+                                modifier = Modifier.size(22.dp)
+                            ) {
+                                Text("📋", fontSize = 12.sp)
+                            }
+                            Spacer(modifier = Modifier.width(4.dp))
+                            IconButton(
+                                onClick = { onEditMessage() },
+                                modifier = Modifier.size(22.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Edit,
+                                    contentDescription = "Editar y reenviar",
+                                    modifier = Modifier.size(13.dp),
+                                    tint = if (isUser) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.75f) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(4.dp))
+                            IconButton(
+                                onClick = { onShareMessage() },
+                                modifier = Modifier.size(22.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Share,
+                                    contentDescription = "Compartir",
+                                    modifier = Modifier.size(13.dp),
+                                    tint = if (isUser) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.75f) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
+                                )
+                            }
+                        }
 
                         // If message is linked to a planning Mode Pending Action
                         if (message.pendingActionId != null) {
@@ -1173,6 +1594,14 @@ fun ChatMessageItem(
                         }
                     }
                 }
+            }
+
+            if (isSelectionMode && isUser) {
+                Checkbox(
+                    checked = isSelected,
+                    onCheckedChange = { onToggleSelect() },
+                    modifier = Modifier.padding(start = 4.dp)
+                )
             }
         }
     }
@@ -1281,7 +1710,7 @@ fun ActionPlanCard(
 }
 
 @Composable
-fun LlmStreamingLoader() {
+fun LlmStreamingLoader(statusText: String = "Riso analizando...") {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1304,7 +1733,7 @@ fun LlmStreamingLoader() {
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "Riso analizando...",
+                    text = statusText,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
