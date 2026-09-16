@@ -30,6 +30,13 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -55,6 +62,11 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import com.example.ui.theme.StatusSuccess
+import com.example.ui.theme.StatusSuccessDark
+import com.example.ui.theme.StatusError
+import com.example.ui.theme.StatusErrorDark
+import com.example.ui.theme.StatusWarning
 import com.example.data.model.ChatMessage
 import com.example.data.model.ChatSession
 import com.example.data.model.PendingAction
@@ -215,21 +227,24 @@ fun RisoMainScreen(
                     // Drawer Header
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(bottom = 20.dp, top = 8.dp)
+                        modifier = Modifier.padding(bottom = 16.dp, top = 8.dp)
                     ) {
-                        RisoLogo(
+                        Box(
                             modifier = Modifier
                                 .size(44.dp)
                                 .clip(CircleShape)
-                                .background(Color(0xFF151522)) // Meets modern deep slate aesthetic
-                        )
+                                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            RisoLogo(modifier = Modifier.size(32.dp))
+                        }
                         Spacer(modifier = Modifier.width(12.dp))
                         Column {
                             Text(
-                                text = "Riso Chatbot",
+                                text = "Riso",
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 18.sp,
-                                color = MaterialTheme.colorScheme.onBackground
+                                color = MaterialTheme.colorScheme.onSurface
                             )
                             Text(
                                 text = t("local_offline"),
@@ -239,65 +254,77 @@ fun RisoMainScreen(
                         }
                     }
                     
-                    HorizontalDivider(color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.08f))
-                    Spacer(modifier = Modifier.height(16.dp))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                    Spacer(modifier = Modifier.height(12.dp))
                     
-                    // Chat History Section
-                    Text(
-                        text = t("chat_history").uppercase(),
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(start = 8.dp, end = 8.dp, bottom = 4.dp)
-                    )
-
                     // "+ Nuevo Chat" Button
-                    Row(
+                    FilledTonalButton(
+                        onClick = {
+                            viewModel.createNewSession()
+                            currentTab = "chat"
+                            coroutineScope.launch { drawerState.close() }
+                        },
+                        shape = RoundedCornerShape(16.dp),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 4.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.08f))
-                            .clickable {
-                                viewModel.createNewSession()
-                                currentTab = "chat"
-                                coroutineScope.launch { drawerState.close() }
-                            }
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                            .heightIn(min = 48.dp)
+                            .padding(vertical = 4.dp),
+                        colors = ButtonDefaults.filledTonalButtonColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
                     ) {
-                        Text("➕", fontSize = 14.sp)
-                        Spacer(modifier = Modifier.width(10.dp))
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text = t("new_chat"),
                             fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary
+                            fontWeight = FontWeight.Bold
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Chronological groupings
+                    val now = System.currentTimeMillis()
+                    val oneDayMillis = 24 * 60 * 60 * 1000L
+                    val startOfToday = now - (now % oneDayMillis)
+                    val startOfYesterday = startOfToday - oneDayMillis
+                    val startOfWeek = startOfToday - (6 * oneDayMillis)
+
+                    val pinnedSessions = remember(sessions) { sessions.filter { it.isPinned }.sortedByDescending { it.createdAt } }
+                    val unpinnedSessions = remember(sessions) { sessions.filter { !it.isPinned }.sortedByDescending { it.createdAt } }
+                    val todaySessions = remember(unpinnedSessions) { unpinnedSessions.filter { it.createdAt >= startOfToday } }
+                    val yesterdaySessions = remember(unpinnedSessions) { unpinnedSessions.filter { it.createdAt in startOfYesterday until startOfToday } }
+                    val weekSessions = remember(unpinnedSessions) { unpinnedSessions.filter { it.createdAt in startOfWeek until startOfYesterday } }
+                    val olderSessions = remember(unpinnedSessions) { unpinnedSessions.filter { it.createdAt < startOfWeek } }
 
                     // Scrollable list of sessions
                     Column(
                         modifier = Modifier
                             .weight(1f)
                             .verticalScroll(rememberScrollState()),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
-                        sessions.sortedWith(compareByDescending<com.example.data.model.ChatSession> { it.isPinned }.thenByDescending { it.createdAt }).forEach { session ->
+                        @Composable
+                        fun renderSessionItem(session: com.example.data.model.ChatSession) {
                             val isSelected = session.id == selectedSessionId && currentTab == "chat"
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(10.dp))
+                                    .heightIn(min = 48.dp)
+                                    .clip(RoundedCornerShape(12.dp))
                                     .background(if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else Color.Transparent)
                                     .clickable {
                                         viewModel.selectSession(session.id)
                                         currentTab = "chat"
                                         coroutineScope.launch { drawerState.close() }
                                     }
-                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                    .padding(horizontal = 8.dp, vertical = 2.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
@@ -305,17 +332,25 @@ fun RisoMainScreen(
                                     verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier.weight(1f)
                                 ) {
-                                    if (session.isPinned) {
-                                        Text("📌", fontSize = 12.sp)
+                                    if (isSelected) {
+                                        Box(
+                                            modifier = Modifier
+                                                .width(3.dp)
+                                                .height(20.dp)
+                                                .clip(RoundedCornerShape(2.dp))
+                                                .background(MaterialTheme.colorScheme.primary)
+                                        )
                                         Spacer(modifier = Modifier.width(6.dp))
-                                    } else {
-                                        Text("💬", fontSize = 14.sp)
-                                        Spacer(modifier = Modifier.width(10.dp))
                                     }
+                                    Text(
+                                        text = if (session.isPinned) "📌" else "💬",
+                                        fontSize = 13.sp
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
                                     Text(
                                         text = session.title ?: "Chat Riso",
                                         fontSize = 13.sp,
-                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
                                         color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
@@ -324,36 +359,80 @@ fun RisoMainScreen(
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     IconButton(
                                         onClick = { viewModel.togglePinSession(session.id) },
-                                        modifier = Modifier.size(24.dp)
+                                        modifier = Modifier.size(48.dp)
                                     ) {
-                                        Text(if (session.isPinned) "📌" else "📍", fontSize = 12.sp)
+                                        Text(if (session.isPinned) "📌" else "📍", fontSize = 13.sp)
                                     }
-                                    Spacer(modifier = Modifier.width(2.dp))
                                     IconButton(
                                         onClick = {
                                             renamingSession = session
                                             renamingTitleText = session.title ?: ""
                                         },
-                                        modifier = Modifier.size(24.dp)
+                                        modifier = Modifier.size(48.dp)
                                     ) {
-                                        Text("✏️", fontSize = 12.sp)
+                                        Icon(
+                                            Icons.Default.Edit,
+                                            contentDescription = "Renombrar",
+                                            modifier = Modifier.size(16.dp),
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
                                     }
                                     if (sessions.size > 1) {
-                                        Spacer(modifier = Modifier.width(2.dp))
                                         IconButton(
                                             onClick = { viewModel.deleteSession(session.id) },
-                                            modifier = Modifier.size(24.dp)
+                                            modifier = Modifier.size(48.dp)
                                         ) {
-                                            Text("🗑️", fontSize = 12.sp)
+                                            Icon(
+                                                Icons.Default.Delete,
+                                                contentDescription = "Eliminar",
+                                                modifier = Modifier.size(16.dp),
+                                                tint = MaterialTheme.colorScheme.error
+                                            )
                                         }
                                     }
                                 }
                             }
                         }
+
+                        @Composable
+                        fun renderGroupHeader(title: String) {
+                            Text(
+                                text = title,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(start = 10.dp, top = 10.dp, bottom = 4.dp)
+                            )
+                        }
+
+                        if (pinnedSessions.isNotEmpty()) {
+                            renderGroupHeader(if (isEn) "PINNED" else "FIJADOS")
+                            pinnedSessions.forEach { renderSessionItem(it) }
+                        }
+
+                        if (todaySessions.isNotEmpty()) {
+                            renderGroupHeader(if (isEn) "TODAY" else "HOY")
+                            todaySessions.forEach { renderSessionItem(it) }
+                        }
+
+                        if (yesterdaySessions.isNotEmpty()) {
+                            renderGroupHeader(if (isEn) "YESTERDAY" else "AYER")
+                            yesterdaySessions.forEach { renderSessionItem(it) }
+                        }
+
+                        if (weekSessions.isNotEmpty()) {
+                            renderGroupHeader(if (isEn) "LAST 7 DAYS" else "ÚLTIMOS 7 DÍAS")
+                            weekSessions.forEach { renderSessionItem(it) }
+                        }
+
+                        if (olderSessions.isNotEmpty()) {
+                            renderGroupHeader(if (isEn) "OLDER" else "ANTERIORES")
+                            olderSessions.forEach { renderSessionItem(it) }
+                        }
                     }
 
                     Spacer(modifier = Modifier.height(8.dp))
-                    HorizontalDivider(color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.08f))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
                     Spacer(modifier = Modifier.height(8.dp))
 
                     // Settings option at the bottom
@@ -379,7 +458,7 @@ fun RisoMainScreen(
                     Spacer(modifier = Modifier.height(8.dp))
                     
                     // Drawer Footer: Quick Theme Mode and Active Info
-                    HorizontalDivider(color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.08f))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
                     Spacer(modifier = Modifier.height(12.dp))
                     
                     // Theme mode toggle
@@ -391,30 +470,22 @@ fun RisoMainScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = if (themeMode == "light") t("theme_light") else t("theme_dark"),
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onSurface
+                        Text(
+                            text = if (themeMode == "light") t("theme_light") else t("theme_dark"),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Switch(
+                            checked = themeMode == "light",
+                            onCheckedChange = { isLight ->
+                                viewModel.updateSetting("theme_mode", if (isLight) "light" else "dark")
+                            },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = MaterialTheme.colorScheme.primary,
+                                checkedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)
                             )
-                        }
-                        Box(
-                            modifier = Modifier.size(54.dp, 34.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Switch(
-                                checked = themeMode == "light",
-                                onCheckedChange = { isLight ->
-                                    viewModel.updateSetting("theme_mode", if (isLight) "light" else "dark")
-                                },
-                                colors = SwitchDefaults.colors(
-                                    checkedThumbColor = MaterialTheme.colorScheme.primary,
-                                    checkedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)
-                                ),
-                                modifier = Modifier.scale(0.8f)
-                            )
-                        }
+                        )
                     }
                 }
             }
@@ -444,7 +515,10 @@ fun RisoMainScreen(
                         }
                     },
                     navigationIcon = {
-                        IconButton(onClick = { coroutineScope.launch { drawerState.open() } }) {
+                        IconButton(
+                            onClick = { coroutineScope.launch { drawerState.open() } },
+                            modifier = Modifier.size(48.dp)
+                        ) {
                             Icon(Icons.Default.Menu, contentDescription = "Hamburguer menu")
                         }
                     },
@@ -454,7 +528,7 @@ fun RisoMainScreen(
                             if (curSession != null) {
                                 IconButton(
                                     onClick = { viewModel.togglePinSession(curSession.id) },
-                                    modifier = Modifier.size(36.dp)
+                                    modifier = Modifier.size(48.dp)
                                 ) {
                                     Text(if (curSession.isPinned) "📌" else "📍", fontSize = 16.sp)
                                 }
@@ -468,12 +542,15 @@ fun RisoMainScreen(
                                             }
                                         }
                                     },
-                                    modifier = Modifier.size(36.dp)
+                                    modifier = Modifier.size(48.dp)
                                 ) {
                                     Icon(Icons.Default.Share, contentDescription = "Exportar conversación completa", modifier = Modifier.size(18.dp))
                                 }
                             }
-                            IconButton(onClick = { viewModel.createNewSession() }, modifier = Modifier.size(36.dp)) {
+                            IconButton(
+                                onClick = { viewModel.createNewSession() },
+                                modifier = Modifier.size(48.dp)
+                            ) {
                                 Icon(Icons.Default.Add, contentDescription = "Nueva conversación", modifier = Modifier.size(20.dp))
                             }
                         }
@@ -513,32 +590,6 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
     val activeEmailAccountId by viewModel.activeEmailAccountId.collectAsStateWithLifecycle()
     val githubAccounts by viewModel.githubAccounts.collectAsStateWithLifecycle()
     val gitlabAccounts by viewModel.gitlabAccounts.collectAsStateWithLifecycle()
-
-    var mcpTabSelection by remember { mutableIntStateOf(0) } // 0: Correo, 1: GitHub & GitLab, 2: Herramientas & Adjuntos
-    var gitSubTabSelection by remember { mutableIntStateOf(0) } // 0: GitHub, 1: GitLab
-
-    var showAddEmailForm by remember { mutableStateOf(false) }
-    var emailInputAddress by remember { mutableStateOf("") }
-    var emailInputPassword by remember { mutableStateOf("") }
-    var emailInputImapServer by remember { mutableStateOf("imap.gmail.com") }
-    var emailInputImapPort by remember { mutableStateOf("993") }
-    var emailInputSmtpServer by remember { mutableStateOf("smtp.gmail.com") }
-    var emailInputSmtpPort by remember { mutableStateOf("587") }
-
-    var showAddGithubForm by remember { mutableStateOf(false) }
-    var githubInputUsername by remember { mutableStateOf("") }
-    var githubInputToken by remember { mutableStateOf("") }
-    var githubInputLabel by remember { mutableStateOf("") }
-
-    var showAddGitlabForm by remember { mutableStateOf(false) }
-    var gitlabInputUrl by remember { mutableStateOf("https://gitlab.com") }
-    var gitlabInputUsername by remember { mutableStateOf("") }
-    var gitlabInputToken by remember { mutableStateOf("") }
-    var gitlabInputLabel by remember { mutableStateOf("") }
-
-    var emailTestResults by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
-    var githubTestResults by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
-    var gitlabTestResults by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
 
     val sttProvider by viewModel.sttProvider.collectAsStateWithLifecycle()
     val whisperStatus by viewModel.localWhisperStatus.collectAsStateWithLifecycle()
@@ -896,124 +947,144 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
             }
         }
 
-        // Chat Conversation window
-        LazyColumn(
-            state = listState,
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            items(messages) { msg ->
-                ChatMessageItem(
-                    message = msg,
-                    pendingActions = pendingActions,
-                    onApprove = { viewModel.approveAction(it) },
-                    onReject = { viewModel.rejectAction(it) },
-                    isSelectionMode = isSelectionMode,
-                    isSelected = selectedMessageIds.contains(msg.id),
-                    onToggleSelect = {
-                        if (selectedMessageIds.contains(msg.id)) {
-                            selectedMessageIds.remove(msg.id)
-                            if (selectedMessageIds.isEmpty()) isSelectionMode = false
-                        } else {
-                            selectedMessageIds.add(msg.id)
+        // Chat Conversation window / Empty state
+        if (messages.isEmpty()) {
+            EmptyChatState(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                isEn = isEn,
+                onSelectPrompt = { prompt ->
+                    textInput = prompt
+                }
+            )
+        } else {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(messages, key = { it.id }) { msg ->
+                    ChatMessageItem(
+                        message = msg,
+                        pendingActions = pendingActions,
+                        onApprove = { viewModel.approveAction(it) },
+                        onReject = { viewModel.rejectAction(it) },
+                        isSelectionMode = isSelectionMode,
+                        isSelected = selectedMessageIds.contains(msg.id),
+                        onToggleSelect = {
+                            if (selectedMessageIds.contains(msg.id)) {
+                                selectedMessageIds.remove(msg.id)
+                                if (selectedMessageIds.isEmpty()) isSelectionMode = false
+                            } else {
+                                selectedMessageIds.add(msg.id)
+                            }
+                        },
+                        onStartSelection = {
+                            isSelectionMode = true
+                            if (!selectedMessageIds.contains(msg.id)) {
+                                selectedMessageIds.add(msg.id)
+                            }
+                        },
+                        onCopyMessage = {
+                            safeCopyText(context, "Mensaje Riso", msg.text, "Mensaje copiado al portapapeles")
+                        },
+                        onEditMessage = {
+                            editingMessageText = msg.text
+                            textInput = msg.text
+                        },
+                        onShareMessage = {
+                            safeShareText(context, msg.text, "Compartir mensaje")
                         }
-                    },
-                    onStartSelection = {
-                        isSelectionMode = true
-                        if (!selectedMessageIds.contains(msg.id)) {
-                            selectedMessageIds.add(msg.id)
-                        }
-                    },
-                    onCopyMessage = {
-                        safeCopyText(context, "Mensaje Riso", msg.text, "Mensaje copiado al portapapeles")
-                    },
-                    onEditMessage = {
-                        editingMessageText = msg.text
-                        textInput = msg.text
-                    },
-                    onShareMessage = {
-                        safeShareText(context, msg.text, "Compartir mensaje")
-                    }
-                )
-            }
+                    )
+                }
 
-            if (isLlmLoading) {
-                item {
-                    LlmStreamingLoader(loadingStatusText)
+                if (isLlmLoading) {
+                    item {
+                        LlmStreamingLoader(loadingStatusText)
+                    }
                 }
             }
         }
 
         // Recording & Transcription Feedback Banner
         if (isRecordingAudio || isTranscribingAudio || recordingFeedback.isNotBlank()) {
-            Row(
+            Surface(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 6.dp)
-                    .background(
-                        if (isRecordingAudio) MaterialTheme.colorScheme.error.copy(alpha = 0.12f)
-                        else if (isTranscribingAudio) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
-                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        RoundedCornerShape(12.dp)
-                    )
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                if (isRecordingAudio) {
-                    Box(
-                        modifier = Modifier
-                            .size(10.dp)
-                            .clip(CircleShape)
-                            .background(Color.Red)
-                    )
-                } else if (isTranscribingAudio) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(14.dp),
-                        strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = recordingFeedback,
-                    fontSize = 11.5.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = if (isRecordingAudio) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.weight(1f),
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
+                    .padding(horizontal = 14.dp, vertical = 4.dp),
+                shape = RoundedCornerShape(16.dp),
+                color = if (isRecordingAudio) MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)
+                        else if (isTranscribingAudio) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                        else MaterialTheme.colorScheme.surfaceContainerHigh,
+                border = BorderStroke(
+                    1.dp,
+                    if (isRecordingAudio) MaterialTheme.colorScheme.error.copy(alpha = 0.3f)
+                    else if (isTranscribingAudio) MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)
+                    else MaterialTheme.colorScheme.outline.copy(alpha = 0.15f)
                 )
-                if (isRecordingAudio) {
-                    TextButton(
-                        onClick = {
-                            viewModel.stopAudioRecordingAndTranscribe { transcription ->
-                                textInput = transcription
-                            }
-                        },
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                        modifier = Modifier.height(26.dp)
-                    ) {
-                        Text(
-                            text = "Listo ⏹",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.error
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (isRecordingAudio) {
+                        Box(
+                            modifier = Modifier
+                                .size(10.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.error)
+                        )
+                    } else if (isTranscribingAudio) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(14.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.primary
                         )
                     }
-                } else if (!isTranscribingAudio) {
-                    IconButton(
-                        onClick = { viewModel.clearRecordingFeedback() },
-                        modifier = Modifier.size(24.dp)
-                    ) {
-                        Icon(
-                            Icons.Default.Close,
-                            contentDescription = "Cerrar",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                            modifier = Modifier.size(14.dp)
-                        )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        text = recordingFeedback,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Medium,
+                        color = if (isRecordingAudio) MaterialTheme.colorScheme.error
+                                else MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (isRecordingAudio) {
+                        TextButton(
+                            onClick = {
+                                viewModel.stopAudioRecordingAndTranscribe { transcription ->
+                                    textInput = transcription
+                                }
+                            },
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                            modifier = Modifier.heightIn(min = 48.dp)
+                        ) {
+                            Text(
+                                text = "Listo ⏹",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
+                    } else if (!isTranscribingAudio) {
+                        IconButton(
+                            onClick = { viewModel.clearRecordingFeedback() },
+                            modifier = Modifier.size(48.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = "Cerrar",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -1024,318 +1095,385 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
             LazyRow(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                    .padding(horizontal = 14.dp, vertical = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 if (attachments.isNotEmpty()) {
                     items(attachments, key = { it.id }) { att ->
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(10.dp))
-                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
                         ) {
-                            Text(if (att.type == "camera" || att.type == "image") "📷" else "📎", fontSize = 13.sp)
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = att.name,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.widthIn(max = 140.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = "Remover archivo",
-                                tint = Color.Red,
-                                modifier = Modifier
-                                    .size(14.dp)
-                                    .clickable { viewModel.removeAttachment(att.id) }
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                            ) {
+                                Text(if (att.type == "camera" || att.type == "image") "📷" else "📎", fontSize = 13.sp)
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = att.name,
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.widthIn(max = 150.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                IconButton(
+                                    onClick = { viewModel.removeAttachment(att.id) },
+                                    modifier = Modifier.size(24.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Remover archivo",
+                                        tint = MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                }
+                            }
                         }
                     }
                 } else if (attachedImage != null) {
                     item {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(10.dp))
-                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
                         ) {
-                            Text("📷", fontSize = 13.sp)
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "Archivo: $attachedImage.png",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = "Remover archivo",
-                                tint = Color.Red,
-                                modifier = Modifier
-                                    .size(14.dp)
-                                    .clickable { viewModel.attachSampleImage(null) }
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                            ) {
+                                Text("📷", fontSize = 13.sp)
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "Archivo: $attachedImage.png",
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                IconButton(
+                                    onClick = { viewModel.attachSampleImage(null) },
+                                    modifier = Modifier.size(24.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Remover archivo",
+                                        tint = MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                }
+                            }
                         }
                     }
                 }
             }
         }
 
-        // Row right above the chat input box: LLM Model selector on the left, Planning mode switch on the right
-        Row(
+        // Modern Floating Composer Container
+        Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+                .padding(start = 12.dp, end = 12.dp, top = 2.dp, bottom = 8.dp),
+            shape = RoundedCornerShape(24.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
+            shadowElevation = 1.dp
         ) {
-            val llmProfiles by viewModel.llmProfiles.collectAsStateWithLifecycle()
-            val activeLlmId by viewModel.activeLlmProfileId.collectAsStateWithLifecycle()
-            val activeProf = llmProfiles.find { it.id == activeLlmId }
-            val activeDisplayName = activeProf?.name
-
-            // Select active LLM directly from chat box (opens sliding bottom sheet)
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(
-                        if (activeProf != null) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
-                        else MaterialTheme.colorScheme.error.copy(alpha = 0.08f)
-                    )
-                    .border(
-                        1.dp,
-                        if (activeProf != null) MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)
-                        else MaterialTheme.colorScheme.error.copy(alpha = 0.4f),
-                        RoundedCornerShape(14.dp)
-                    )
-                    .clickable { showModelSelector = true }
-                    .padding(horizontal = 10.dp, vertical = 5.dp)
-                    .testTag("chat_box_llm_selector")
-            ) {
-                Text(
-                    text = if (activeDisplayName != null) "🤖 $activeDisplayName ▾" else "⚠️ Seleccionar Modelo ▾",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = if (activeProf != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
-                )
-            }
-
-            // Planning Mode / Execution Mode toggle with dynamic radio position and color
-            // Planning Mode Active: Green color, radio button on the LEFT
-            // Execution Mode Active: Red color, radio button on the RIGHT
-            Row(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(
-                        if (planningMode) Color(0xFF10B981).copy(alpha = 0.12f)
-                        else Color(0xFFEF4444).copy(alpha = 0.12f)
-                    )
-                    .border(
-                        width = 1.dp,
-                        color = if (planningMode) Color(0xFF10B981).copy(alpha = 0.6f)
-                                else Color(0xFFEF4444).copy(alpha = 0.6f),
-                        shape = RoundedCornerShape(20.dp)
-                    )
-                    .clickable { viewModel.togglePlanningMode() }
-                    .padding(horizontal = 10.dp, vertical = 5.dp)
-                    .testTag("toggle_planning_mode_chat"),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                if (planningMode) {
-                    // Planning Mode: GREEN, Radio button on the LEFT
-                    Box(
-                        modifier = Modifier
-                            .size(10.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFF10B981))
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = "Planificación",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF047857)
-                    )
-                } else {
-                    // Execution Mode: RED, Radio button on the RIGHT
-                    Text(
-                        text = "Ejecución",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFFB91C1C)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Box(
-                        modifier = Modifier
-                            .size(10.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFFEF4444))
-                    )
-                }
-            }
-        }
-
-        // Banner if editing a message to resend
-        if (editingMessageText != null) {
-            Row(
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 2.dp)
-                    .background(MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.85f), RoundedCornerShape(8.dp))
-                    .padding(horizontal = 10.dp, vertical = 5.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                    .padding(top = 6.dp, bottom = 6.dp, start = 6.dp, end = 6.dp)
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "✏️ Editando mensaje para reenviar",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onTertiaryContainer
-                    )
-                }
-                Icon(
-                    imageVector = Icons.Default.Close,
-                    contentDescription = "Cancelar edición",
+                // Top control bar: LLM Model selector & Planning mode switch
+                Row(
                     modifier = Modifier
-                        .size(16.dp)
-                        .clickable {
-                            editingMessageText = null
-                            textInput = ""
-                        },
-                    tint = MaterialTheme.colorScheme.onTertiaryContainer
-                )
-            }
-        }
+                        .fillMaxWidth()
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    val llmProfiles by viewModel.llmProfiles.collectAsStateWithLifecycle()
+                    val activeLlmId by viewModel.activeLlmProfileId.collectAsStateWithLifecycle()
+                    val activeProf = llmProfiles.find { it.id == activeLlmId }
+                    val activeDisplayName = activeProf?.name
 
-        // Bottom Input Row - clean 4-element layout matching modern compact distribution
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = 12.dp, end = 12.dp, top = 3.dp, bottom = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            // MCP & Attachments button
-            IconButton(
-                onClick = { showAttachMenu = true },
-                modifier = Modifier
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                    .testTag("mcp_attachments_plus_button")
-            ) {
-                Text("➕", fontSize = 15.sp)
-            }
-
-            // Chat input text field
-            val canSend = textInput.isNotBlank() || attachments.isNotEmpty() || attachedImage != null
-            OutlinedTextField(
-                value = textInput,
-                onValueChange = { textInput = it },
-                placeholder = { Text(t("chat_input_placeholder"), fontSize = 13.sp) },
-                shape = RoundedCornerShape(24.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = MaterialTheme.colorScheme.primary,
-                    unfocusedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f),
-                    focusedContainerColor = MaterialTheme.colorScheme.surface,
-                    unfocusedContainerColor = MaterialTheme.colorScheme.surface
-                ),
-                maxLines = 3,
-                modifier = Modifier
-                    .weight(1f)
-                    .testTag("chat_input_text_field"),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                keyboardActions = KeyboardActions(onSend = {
-                    if (canSend) {
-                        viewModel.sendMessage(textInput)
-                        textInput = ""
-                        editingMessageText = null
-                        keyboardController?.hide()
-                    }
-                })
-            )
-
-            // STT Microphone button (Real Voice Recording & Whisper Transcription)
-            IconButton(
-                onClick = {
-                    if (isRecordingAudio) {
-                        viewModel.stopAudioRecordingAndTranscribe { transcription ->
-                            textInput = transcription
+                    // Select active LLM directly from chat box
+                    Surface(
+                        onClick = { showModelSelector = true },
+                        shape = RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                        border = BorderStroke(
+                            1.dp,
+                            if (activeProf != null) MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
+                            else MaterialTheme.colorScheme.error.copy(alpha = 0.35f)
+                        ),
+                        modifier = Modifier
+                            .heightIn(min = 34.dp)
+                            .testTag("chat_box_llm_selector")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = if (activeDisplayName != null) "🤖 $activeDisplayName ▾" else "⚠️ Seleccionar Modelo ▾",
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (activeProf != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                            )
                         }
-                    } else if (!hasMicPermission) {
-                        micPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
-                    } else {
-                        viewModel.startAudioRecording()
                     }
-                },
-                enabled = !isTranscribingAudio,
-                modifier = Modifier
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .background(
-                        if (isRecordingAudio) MaterialTheme.colorScheme.error.copy(alpha = 0.2f)
-                        else if (isTranscribingAudio) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
-                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                    )
-                    .testTag("chat_stt_microphone")
-            ) {
-                if (isRecordingAudio) {
-                    Text(
-                        text = "⏹️",
-                        fontSize = 14.sp
-                    )
-                } else if (isTranscribingAudio) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(16.dp),
-                        strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                } else {
-                    Text(
-                        text = "🎙️",
-                        fontSize = 15.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
 
-            // Send button
-            IconButton(
-                onClick = {
-                    if (canSend) {
-                        viewModel.sendMessage(textInput)
-                        textInput = ""
-                        editingMessageText = null
-                        keyboardController?.hide()
+                    // Planning Mode / Execution Mode toggle
+                    Surface(
+                        onClick = { viewModel.togglePlanningMode() },
+                        shape = RoundedCornerShape(16.dp),
+                        color = if (planningMode) StatusSuccess.copy(alpha = 0.12f)
+                                else StatusError.copy(alpha = 0.12f),
+                        border = BorderStroke(
+                            1.dp,
+                            if (planningMode) StatusSuccess.copy(alpha = 0.45f)
+                            else StatusError.copy(alpha = 0.45f)
+                        ),
+                        modifier = Modifier
+                            .heightIn(min = 34.dp)
+                            .testTag("toggle_planning_mode_chat")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            if (planningMode) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(8.dp)
+                                        .clip(CircleShape)
+                                        .background(StatusSuccess)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "Planificación",
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = StatusSuccess
+                                )
+                            } else {
+                                Text(
+                                    text = "Ejecución",
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = StatusError
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .size(8.dp)
+                                        .clip(CircleShape)
+                                        .background(StatusError)
+                                )
+                            }
+                        }
                     }
-                },
-                enabled = canSend,
-                modifier = Modifier
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .background(
-                        if (canSend)
-                            MaterialTheme.colorScheme.primary
-                        else
-                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                }
+
+                // Banner if editing a message to resend
+                if (editingMessageText != null) {
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.85f),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 6.dp, vertical = 3.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "✏️ Editando mensaje para reenviar",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                modifier = Modifier.weight(1f)
+                            )
+                            IconButton(
+                                onClick = {
+                                    editingMessageText = null
+                                    textInput = ""
+                                },
+                                modifier = Modifier.size(24.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Cancelar edición",
+                                    modifier = Modifier.size(14.dp),
+                                    tint = MaterialTheme.colorScheme.onTertiaryContainer
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Bottom Input Row: (+) button, TextField, Mic, Send
+                val canSend = textInput.isNotBlank() || attachments.isNotEmpty() || attachedImage != null
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    // MCP & Attachments button (48dp touch target)
+                    IconButton(
+                        onClick = { showAttachMenu = true },
+                        modifier = Modifier
+                            .size(48.dp)
+                            .testTag("mcp_attachments_plus_button")
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(34.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = "Adjuntar / MCP",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+
+                    // Chat input text field without its own heavy border
+                    TextField(
+                        value = textInput,
+                        onValueChange = { textInput = it },
+                        placeholder = {
+                            Text(
+                                text = if (isEn) "Ask Riso anything..." else "Pregunta a Riso...",
+                                fontSize = 13.5.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                            )
+                        },
+                        colors = TextFieldDefaults.colors(
+                            focusedContainerColor = Color.Transparent,
+                            unfocusedContainerColor = Color.Transparent,
+                            disabledContainerColor = Color.Transparent,
+                            focusedIndicatorColor = Color.Transparent,
+                            unfocusedIndicatorColor = Color.Transparent,
+                            disabledIndicatorColor = Color.Transparent,
+                            cursorColor = MaterialTheme.colorScheme.primary,
+                            focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                            unfocusedTextColor = MaterialTheme.colorScheme.onSurface
+                        ),
+                        maxLines = 4,
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("chat_input_text_field"),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                        keyboardActions = KeyboardActions(onSend = {
+                            if (canSend) {
+                                viewModel.sendMessage(textInput)
+                                textInput = ""
+                                editingMessageText = null
+                                keyboardController?.hide()
+                            }
+                        })
                     )
-                    .testTag("chat_send_button")
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Send,
-                    contentDescription = "Send",
-                    tint = if (canSend) Color.White else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f),
-                    modifier = Modifier.size(15.dp)
-                )
+
+                    // STT Microphone button (48dp touch target)
+                    IconButton(
+                        onClick = {
+                            if (isRecordingAudio) {
+                                viewModel.stopAudioRecordingAndTranscribe { transcription ->
+                                    textInput = transcription
+                                }
+                            } else if (!hasMicPermission) {
+                                micPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+                            } else {
+                                viewModel.startAudioRecording()
+                            }
+                        },
+                        enabled = !isTranscribingAudio,
+                        modifier = Modifier
+                            .size(48.dp)
+                            .testTag("chat_stt_microphone")
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(34.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    if (isRecordingAudio) MaterialTheme.colorScheme.error.copy(alpha = 0.2f)
+                                    else if (isTranscribingAudio) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                                    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (isRecordingAudio) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(12.dp)
+                                        .clip(RoundedCornerShape(3.dp))
+                                        .background(MaterialTheme.colorScheme.error)
+                                )
+                            } else if (isTranscribingAudio) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            } else {
+                                Text(
+                                    text = "🎙️",
+                                    fontSize = 15.sp
+                                )
+                            }
+                        }
+                    }
+
+                    // Send button (48dp touch target)
+                    IconButton(
+                        onClick = {
+                            if (canSend) {
+                                viewModel.sendMessage(textInput)
+                                textInput = ""
+                                editingMessageText = null
+                                keyboardController?.hide()
+                            }
+                        },
+                        enabled = canSend,
+                        modifier = Modifier
+                            .size(48.dp)
+                            .testTag("chat_send_button")
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(34.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    if (canSend) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.surfaceContainerHighest
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.Send,
+                                contentDescription = "Enviar",
+                                tint = if (canSend) MaterialTheme.colorScheme.onPrimary
+                                       else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f),
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                }
             }
         }
     }
@@ -1375,6 +1513,128 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
 }
 
 @Composable
+fun EmptyChatState(
+    modifier: Modifier = Modifier,
+    isEn: Boolean,
+    onSelectPrompt: (String) -> Unit
+) {
+    val samplePrompts = if (isEn) {
+        listOf(
+            "📧 Summarize my recent emails",
+            "📝 Draft a weekly status report",
+            "🔍 Search tech news on the web",
+            "⚡ Plan and organize my daily tasks"
+        )
+    } else {
+        listOf(
+            "📧 Resumir mis correos recientes",
+            "📝 Redactar un reporte de estado",
+            "🔍 Buscar novedades tecnológicas en la web",
+            "⚡ Planificar y organizar mis tareas"
+        )
+    }
+
+    Column(
+        modifier = modifier
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 24.dp, vertical = 20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Spacer(modifier = Modifier.weight(1f, fill = false))
+
+        // Riso avatar with gentle radial gradient halo
+        Box(
+            modifier = Modifier
+                .size(76.dp)
+                .clip(CircleShape)
+                .background(
+                    Brush.radialGradient(
+                        colors = listOf(
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.22f),
+                            MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.5f),
+                            Color.Transparent
+                        )
+                    )
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(54.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                    .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.15f), CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                RisoLogo(modifier = Modifier.size(38.dp))
+            }
+        }
+
+        Spacer(modifier = Modifier.height(20.dp))
+
+        // Hero greeting
+        Text(
+            text = if (isEn) "How can I help you today?" else "¿En qué puedo ayudarte hoy?",
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+        )
+
+        Spacer(modifier = Modifier.height(6.dp))
+
+        Text(
+            text = if (isEn) "Type a request or try one of these suggestions" else "Escribe tu consulta o prueba una de estas sugerencias",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+        )
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        // Suggestion prompt cards
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            samplePrompts.forEach { prompt ->
+                Surface(
+                    onClick = { onSelectPrompt(prompt.substring(3).trim()) },
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.12f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = prompt,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Icon(
+                            imageVector = Icons.Default.ArrowForward,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.weight(1f, fill = false))
+    }
+}
+
+@Composable
 fun ChatMessageItem(
     message: ChatMessage,
     pendingActions: List<PendingAction>,
@@ -1399,9 +1659,10 @@ fun ChatMessageItem(
                 .padding(vertical = 4.dp),
             contentAlignment = Alignment.Center
         ) {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                shape = RoundedCornerShape(12.dp)
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
             ) {
                 Text(
                     text = message.text,
@@ -1417,7 +1678,7 @@ fun ChatMessageItem(
             modifier = Modifier
                 .fillMaxWidth()
                 .clickable(enabled = isSelectionMode) { onToggleSelect() }
-                .padding(vertical = 2.dp),
+                .padding(vertical = 3.dp),
             horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -1434,162 +1695,213 @@ fun ChatMessageItem(
                     .weight(1f, fill = false)
                     .wrapContentWidth(if (isUser) Alignment.End else Alignment.Start)
             ) {
-                Card(
-                    shape = RoundedCornerShape(
-                        topStart = 14.dp,
-                        topEnd = 14.dp,
-                        bottomStart = if (isUser) 14.dp else 2.dp,
-                        bottomEnd = if (isUser) 2.dp else 14.dp
-                    ),
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (isUser) {
-                            if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.85f)
+                if (isUser) {
+                    Card(
+                        shape = RoundedCornerShape(
+                            topStart = 20.dp,
+                            topEnd = 20.dp,
+                            bottomStart = 20.dp,
+                            bottomEnd = 6.dp
+                        ),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.85f)
                             else MaterialTheme.colorScheme.primary
-                        } else {
-                            if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
-                            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                        ),
+                        border = if (isSelected) BorderStroke(2.dp, MaterialTheme.colorScheme.primaryContainer) else null,
+                        elevation = CardDefaults.cardElevation(defaultElevation = 0.5.dp),
+                        modifier = Modifier.widthIn(min = 40.dp, max = 340.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                            // Markdown text
+                            MarkdownRenderer(
+                                text = message.text,
+                                textColor = MaterialTheme.colorScheme.onPrimary,
+                                isUserMessage = true
+                            )
+
+                            // Mini menu for user message
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 4.dp),
+                                horizontalArrangement = Arrangement.End,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                IconButton(
+                                    onClick = onCopyMessage,
+                                    modifier = Modifier.size(48.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Share,
+                                        contentDescription = "Copiar",
+                                        tint = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.75f),
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                }
+                                IconButton(
+                                    onClick = onEditMessage,
+                                    modifier = Modifier.size(48.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Edit,
+                                        contentDescription = "Editar",
+                                        tint = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.75f),
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                }
+                            }
                         }
-                    ),
-                    border = if (isSelected) {
-                        BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary)
-                    } else if (isUser) null else {
-                        BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
-                    },
-                    modifier = Modifier.widthIn(min = 40.dp, max = 320.dp)
-                ) {
-                    Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-                        // Header row with Sender info & More Menu
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(bottom = 4.dp),
-                            horizontalArrangement = if (isUser) Arrangement.End else Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            if (!isUser) {
+                    }
+                } else {
+                    Surface(
+                        shape = RoundedCornerShape(
+                            topStart = 6.dp,
+                            topEnd = 20.dp,
+                            bottomStart = 20.dp,
+                            bottomEnd = 20.dp
+                        ),
+                        color = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+                               else MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.6f),
+                        border = BorderStroke(
+                            1.dp,
+                            if (isSelected) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.outline.copy(alpha = 0.12f)
+                        ),
+                        modifier = Modifier.widthIn(min = 60.dp, max = 340.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                            // Header row with Riso Agent badge & More Menu
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(bottom = 6.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Box(
                                         modifier = Modifier
-                                            .size(6.dp)
+                                            .size(20.dp)
                                             .clip(CircleShape)
-                                            .background(MaterialTheme.colorScheme.primary)
-                                    )
-                                    Spacer(modifier = Modifier.width(5.dp))
+                                            .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        RisoLogo(modifier = Modifier.size(14.dp))
+                                    }
+                                    Spacer(modifier = Modifier.width(6.dp))
                                     Text(
                                         text = "Riso Agent",
-                                        fontSize = 10.sp,
+                                        style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.Bold,
                                         color = MaterialTheme.colorScheme.primary,
                                         letterSpacing = 0.5.sp
                                     )
                                 }
+
+                                Box {
+                                    IconButton(
+                                        onClick = { showMenu = true },
+                                        modifier = Modifier.size(48.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.MoreVert,
+                                            contentDescription = "Opciones de mensaje",
+                                            modifier = Modifier.size(16.dp),
+                                            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                                        )
+                                    }
+                                    DropdownMenu(
+                                        expanded = showMenu,
+                                        onDismissRequest = { showMenu = false }
+                                    ) {
+                                        DropdownMenuItem(
+                                            text = { Text("📋 Copiar mensaje", fontSize = 12.sp) },
+                                            onClick = {
+                                                showMenu = false
+                                                onCopyMessage()
+                                            }
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text("✏️ Editar y reenviar", fontSize = 12.sp) },
+                                            onClick = {
+                                                showMenu = false
+                                                onEditMessage()
+                                            }
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text("☑️ Seleccionar mensajes", fontSize = 12.sp) },
+                                            onClick = {
+                                                showMenu = false
+                                                onStartSelection()
+                                            }
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text("📤 Compartir", fontSize = 12.sp) },
+                                            onClick = {
+                                                showMenu = false
+                                                onShareMessage()
+                                            }
+                                        )
+                                    }
+                                }
                             }
 
-                            Box {
+                            // Markdown formatted body
+                            MarkdownRenderer(
+                                text = message.text,
+                                textColor = MaterialTheme.colorScheme.onSurface,
+                                isUserMessage = false
+                            )
+
+                            // Quick mini action bar under message with 48dp touch targets
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 6.dp),
+                                horizontalArrangement = Arrangement.End,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
                                 IconButton(
-                                    onClick = { showMenu = true },
-                                    modifier = Modifier.size(20.dp)
+                                    onClick = onCopyMessage,
+                                    modifier = Modifier.size(48.dp)
+                                ) {
+                                    Text("📋", fontSize = 14.sp)
+                                }
+                                IconButton(
+                                    onClick = onEditMessage,
+                                    modifier = Modifier.size(48.dp)
                                 ) {
                                     Icon(
-                                        imageVector = Icons.Default.MoreVert,
-                                        contentDescription = "Opciones de mensaje",
-                                        modifier = Modifier.size(13.dp),
-                                        tint = if (isUser) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.7f) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
+                                        imageVector = Icons.Default.Edit,
+                                        contentDescription = "Editar y reenviar",
+                                        modifier = Modifier.size(15.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
-                                DropdownMenu(
-                                    expanded = showMenu,
-                                    onDismissRequest = { showMenu = false }
+                                IconButton(
+                                    onClick = onShareMessage,
+                                    modifier = Modifier.size(48.dp)
                                 ) {
-                                    DropdownMenuItem(
-                                        text = { Text("📋 Copiar mensaje", fontSize = 12.sp) },
-                                        onClick = {
-                                            showMenu = false
-                                            onCopyMessage()
-                                        }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("✏️ Editar y reenviar", fontSize = 12.sp) },
-                                        onClick = {
-                                            showMenu = false
-                                            onEditMessage()
-                                        }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("☑️ Seleccionar mensajes", fontSize = 12.sp) },
-                                        onClick = {
-                                            showMenu = false
-                                            onStartSelection()
-                                        }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("📤 Compartir", fontSize = 12.sp) },
-                                        onClick = {
-                                            showMenu = false
-                                            onShareMessage()
-                                        }
+                                    Icon(
+                                        imageVector = Icons.Default.Share,
+                                        contentDescription = "Compartir",
+                                        modifier = Modifier.size(15.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
                             }
-                        }
 
-                        // Markdown formatted body
-                        MarkdownRenderer(
-                            text = message.text,
-                            textColor = if (isUser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
-                            isUserMessage = isUser
-                        )
-
-                        // Quick mini action bar under message
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 4.dp),
-                            horizontalArrangement = if (isUser) Arrangement.Start else Arrangement.End,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            IconButton(
-                                onClick = { onCopyMessage() },
-                                modifier = Modifier.size(22.dp)
-                            ) {
-                                Text("📋", fontSize = 12.sp)
-                            }
-                            Spacer(modifier = Modifier.width(4.dp))
-                            IconButton(
-                                onClick = { onEditMessage() },
-                                modifier = Modifier.size(22.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Edit,
-                                    contentDescription = "Editar y reenviar",
-                                    modifier = Modifier.size(13.dp),
-                                    tint = if (isUser) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.75f) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(4.dp))
-                            IconButton(
-                                onClick = { onShareMessage() },
-                                modifier = Modifier.size(22.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Share,
-                                    contentDescription = "Compartir",
-                                    modifier = Modifier.size(13.dp),
-                                    tint = if (isUser) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.75f) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
-                                )
-                            }
-                        }
-
-                        // If message is linked to a planning Mode Pending Action
-                        if (message.pendingActionId != null) {
-                            val action = pendingActions.find { it.id == message.pendingActionId }
-                            if (action != null) {
-                                Spacer(modifier = Modifier.height(8.dp))
-                                ActionPlanCard(
-                                    action = action,
-                                    onApprove = { onApprove(action.id) },
-                                    onReject = { onReject(action.id) }
-                                )
+                            // If message is linked to a planning Mode Pending Action
+                            if (message.pendingActionId != null) {
+                                val action = pendingActions.find { it.id == message.pendingActionId }
+                                if (action != null) {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    ActionPlanCard(
+                                        action = action,
+                                        onApprove = { onApprove(action.id) },
+                                        onReject = { onReject(action.id) }
+                                    )
+                                }
                             }
                         }
                     }
@@ -1613,12 +1925,13 @@ fun ActionPlanCard(
     onApprove: () -> Unit,
     onReject: () -> Unit
 ) {
-    Card(
+    Surface(
         modifier = Modifier.fillMaxWidth(),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh
     ) {
-        Column(modifier = Modifier.padding(12.dp)) {
+        Column(modifier = Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
                     Icons.Default.Lock,
@@ -1626,7 +1939,7 @@ fun ActionPlanCard(
                     tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(16.dp)
                 )
-                Spacer(modifier = Modifier.width(6.dp))
+                Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = "Acción Automatizada",
                     fontSize = 12.sp,
@@ -1636,9 +1949,9 @@ fun ActionPlanCard(
                 Spacer(modifier = Modifier.weight(1f))
                 Badge(
                     containerColor = when (action.status) {
-                        "PENDING" -> Color(0xFFD97706)
-                        "APPROVED" -> Color(0xFF10B981)
-                        else -> Color(0xFFEF4444)
+                        "PENDING" -> StatusWarning
+                        "APPROVED" -> StatusSuccess
+                        else -> StatusError
                     }
                 ) {
                     Text(
@@ -1650,15 +1963,15 @@ fun ActionPlanCard(
                         color = Color.White,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(10.dp))
             Text(
                 text = action.details,
-                fontSize = 13.sp,
+                style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onSurface
             )
@@ -1668,7 +1981,7 @@ fun ActionPlanCard(
                 text = "Metodo: ${action.functionName}",
                 fontSize = 10.sp,
                 fontFamily = FontFamily.Monospace,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
             )
 
             if (action.status == "PENDING") {
@@ -1681,27 +1994,29 @@ fun ActionPlanCard(
                         onClick = onReject,
                         modifier = Modifier
                             .weight(1f)
+                            .heightIn(min = 48.dp)
                             .testTag("action_reject_button"),
-                        shape = RoundedCornerShape(8.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFEF4444)),
-                        border = BorderStroke(1.dp, Color(0xFFEF4444))
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = StatusError),
+                        border = BorderStroke(1.dp, StatusError)
                     ) {
-                        Icon(Icons.Default.Close, contentDescription = "Desc", modifier = Modifier.size(14.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Rechazar", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        Icon(Icons.Default.Close, contentDescription = "Rechazar", modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Rechazar", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
 
                     Button(
                         onClick = onApprove,
                         modifier = Modifier
                             .weight(1f)
+                            .heightIn(min = 48.dp)
                             .testTag("action_approve_button"),
-                        shape = RoundedCornerShape(8.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981))
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = StatusSuccess)
                     ) {
-                        Icon(Icons.Default.Check, contentDescription = "Appr", modifier = Modifier.size(14.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Aprobar", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        Icon(Icons.Default.Check, contentDescription = "Aprobar", modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Aprobar", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -1711,32 +2026,82 @@ fun ActionPlanCard(
 
 @Composable
 fun LlmStreamingLoader(statusText: String = "Riso analizando...") {
+    val infiniteTransition = rememberInfiniteTransition(label = "thinking_dots")
+    val dot1Alpha by infiniteTransition.animateFloat(
+        initialValue = 0.25f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(600, delayMillis = 0, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "dot1"
+    )
+    val dot2Alpha by infiniteTransition.animateFloat(
+        initialValue = 0.25f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(600, delayMillis = 200, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "dot2"
+    )
+    val dot3Alpha by infiniteTransition.animateFloat(
+        initialValue = 0.25f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(600, delayMillis = 400, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "dot3"
+    )
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp),
+            .padding(vertical = 4.dp, horizontal = 2.dp),
         horizontalArrangement = Arrangement.Start
     ) {
-        Card(
-            shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp, bottomEnd = 16.dp),
-            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1F35)),
-            modifier = Modifier.padding(vertical = 2.dp)
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
         ) {
             Row(
-                modifier = Modifier.padding(12.dp),
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(14.dp),
-                    strokeWidth = 2.dp,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Spacer(modifier = Modifier.width(8.dp))
+                // 3 pulsating thinking dots
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(7.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = dot1Alpha))
+                    )
+                    Box(
+                        modifier = Modifier
+                            .size(7.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = dot2Alpha))
+                    )
+                    Box(
+                        modifier = Modifier
+                            .size(7.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = dot3Alpha))
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(10.dp))
+
                 Text(
                     text = statusText,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
@@ -3444,19 +3809,6 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
         )
     }
 }
-
-// Manual extension/utility to scale dynamic switches or components smoothly
-fun Modifier.scale(scale: Float): Modifier = this.then(
-    Modifier.layout { measurable, constraints ->
-        val placeable = measurable.measure(constraints)
-        layout((placeable.width * scale).toInt(), (placeable.height * scale).toInt()) {
-            placeable.placeRelativeWithLayer(0, 0) {
-                scaleX = scale
-                scaleY = scale
-            }
-        }
-    }
-)
 
 @Composable
 fun RisoLogo(modifier: Modifier = Modifier) {

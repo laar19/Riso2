@@ -5,10 +5,12 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.widget.Toast
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -27,8 +29,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 /**
- * Clean and robust Markdown renderer for Riso chat messages.
- * Formats bold, italic, inline code, code blocks, blockquotes, headings, lists,
+ * Clean, responsive, and robust Markdown renderer for Riso chat messages.
+ * Formats headings, paragraphs, lists, code blocks, inline code, blockquotes, tables,
  * and sanitizes raw DSML or XML artifacts.
  */
 @Composable
@@ -43,15 +45,14 @@ fun MarkdownRenderer(
 
     Column(
         modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(4.dp)
+        verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         blocks.forEach { block ->
             when (block) {
                 is MarkdownBlock.CodeBlock -> {
                     CodeBlockCard(
                         language = block.language,
-                        code = block.content,
-                        isUserMessage = isUserMessage
+                        code = block.content
                     )
                 }
                 is MarkdownBlock.Blockquote -> {
@@ -61,9 +62,17 @@ fun MarkdownRenderer(
                         isUserMessage = isUserMessage
                     )
                 }
+                is MarkdownBlock.Table -> {
+                    MarkdownTableItem(
+                        headers = block.headers,
+                        rows = block.rows,
+                        textColor = textColor,
+                        isUserMessage = isUserMessage
+                    )
+                }
                 is MarkdownBlock.Heading -> {
                     val (fSize, fWeight) = when (block.level) {
-                        1 -> Pair(16.sp, FontWeight.ExtraBold)
+                        1 -> Pair(17.sp, FontWeight.ExtraBold)
                         2 -> Pair(15.sp, FontWeight.Bold)
                         else -> Pair(14.sp, FontWeight.SemiBold)
                     }
@@ -72,7 +81,7 @@ fun MarkdownRenderer(
                         fontSize = fSize,
                         fontWeight = fWeight,
                         color = textColor,
-                        lineHeight = (fSize.value + 4).sp,
+                        lineHeight = (fSize.value + 5).sp,
                         modifier = Modifier.padding(top = 4.dp, bottom = 2.dp)
                     )
                 }
@@ -87,14 +96,14 @@ fun MarkdownRenderer(
                             text = if (block.orderedPrefix != null) "${block.orderedPrefix} " else "• ",
                             fontWeight = FontWeight.Bold,
                             color = if (isUserMessage) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f) else MaterialTheme.colorScheme.primary,
-                            fontSize = 13.sp,
-                            modifier = Modifier.padding(start = 2.dp, end = 4.dp)
+                            fontSize = 14.sp,
+                            modifier = Modifier.padding(start = 4.dp, end = 8.dp)
                         )
                         Text(
                             text = parseInlineMarkdown(block.content, textColor, isUserMessage),
-                            fontSize = 13.sp,
+                            fontSize = 14.sp,
                             color = textColor,
-                            lineHeight = 18.sp,
+                            lineHeight = 20.sp,
                             modifier = Modifier.weight(1f)
                         )
                     }
@@ -108,9 +117,9 @@ fun MarkdownRenderer(
                 is MarkdownBlock.Paragraph -> {
                     Text(
                         text = parseInlineMarkdown(block.content, textColor, isUserMessage),
-                        fontSize = 13.sp,
+                        fontSize = 14.sp,
                         color = textColor,
-                        lineHeight = 18.5.sp
+                        lineHeight = 20.sp
                     )
                 }
             }
@@ -121,35 +130,38 @@ fun MarkdownRenderer(
 @Composable
 private fun CodeBlockCard(
     language: String,
-    code: String,
-    isUserMessage: Boolean
+    code: String
 ) {
     val context = LocalContext.current
-    val containerBg = if (isUserMessage) {
-        MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.15f)
-    } else {
-        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
-    }
 
     Card(
-        shape = RoundedCornerShape(8.dp),
-        colors = CardDefaults.cardColors(containerColor = containerBg),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLowest
+        ),
+        border = CardDefaults.outlinedCardBorder().copy(
+            brush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.outline.copy(alpha = 0.18f))
+        ),
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 3.dp)
+            .padding(vertical = 4.dp)
     ) {
-        Column(modifier = Modifier.padding(8.dp)) {
+        Column {
+            // Header bar
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+                    .padding(start = 12.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
                     text = if (language.isNotBlank()) language.uppercase() else "CÓDIGO",
-                    fontSize = 10.sp,
+                    fontSize = 11.sp,
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
-                    color = if (isUserMessage) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.7f) else MaterialTheme.colorScheme.primary
+                    color = MaterialTheme.colorScheme.primary
                 )
                 IconButton(
                     onClick = {
@@ -163,23 +175,25 @@ private fun CodeBlockCard(
                             android.util.Log.e("MarkdownRenderer", "Error copying code", e)
                         }
                     },
-                    modifier = Modifier.size(22.dp)
+                    modifier = Modifier.size(48.dp)
                 ) {
-                    Text("📋", fontSize = 12.sp)
+                    Text("📋", fontSize = 14.sp)
                 }
             }
-            Spacer(modifier = Modifier.height(4.dp))
+
+            // Code content with horizontal scroll
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 12.dp, vertical = 10.dp)
             ) {
                 Text(
                     text = code,
                     fontFamily = FontFamily.Monospace,
-                    fontSize = 11.5.sp,
-                    lineHeight = 15.sp,
-                    color = if (isUserMessage) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp,
+                    color = MaterialTheme.colorScheme.onSurface
                 )
             }
         }
@@ -192,31 +206,121 @@ private fun BlockquoteItem(
     textColor: Color,
     isUserMessage: Boolean
 ) {
-    val barColor = if (isUserMessage) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.6f) else MaterialTheme.colorScheme.primary
-    val quoteBg = if (isUserMessage) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.08f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.05f)
+    val barColor = if (isUserMessage) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.8f) else MaterialTheme.colorScheme.primary
+    val quoteBg = if (isUserMessage) {
+        MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.12f)
+    } else {
+        MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.5f)
+    }
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(4.dp))
+            .clip(RoundedCornerShape(8.dp))
             .background(quoteBg)
-            .padding(horizontal = 8.dp, vertical = 5.dp)
+            .padding(horizontal = 10.dp, vertical = 8.dp)
     ) {
         Box(
             modifier = Modifier
-                .width(3.dp)
-                .height(18.dp)
+                .width(3.5.dp)
+                .height(20.dp)
                 .background(barColor, RoundedCornerShape(2.dp))
         )
         Spacer(modifier = Modifier.width(8.dp))
         Text(
             text = parseInlineMarkdown(quote, textColor, isUserMessage),
-            fontSize = 12.5.sp,
+            fontSize = 13.5.sp,
             fontStyle = FontStyle.Italic,
-            color = textColor.copy(alpha = 0.9f),
-            lineHeight = 17.sp,
+            color = textColor.copy(alpha = 0.95f),
+            lineHeight = 19.sp,
             modifier = Modifier.weight(1f)
         )
+    }
+}
+
+@Composable
+private fun MarkdownTableItem(
+    headers: List<String>,
+    rows: List<List<String>>,
+    textColor: Color,
+    isUserMessage: Boolean
+) {
+    val borderColor = if (isUserMessage) {
+        MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.2f)
+    } else {
+        MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
+    }
+
+    Card(
+        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isUserMessage) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.08f) else MaterialTheme.colorScheme.surfaceContainerLowest
+        ),
+        border = CardDefaults.outlinedCardBorder().copy(
+            brush = androidx.compose.ui.graphics.SolidColor(borderColor)
+        ),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(4.dp)
+        ) {
+            Column {
+                // Header row
+                Row(
+                    modifier = Modifier
+                        .background(
+                            if (isUserMessage) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.15f)
+                            else MaterialTheme.colorScheme.surfaceContainerHigh,
+                            RoundedCornerShape(4.dp)
+                        )
+                        .padding(vertical = 6.dp)
+                ) {
+                    headers.forEach { header ->
+                        Text(
+                            text = header.trim(),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = textColor,
+                            modifier = Modifier
+                                .widthIn(min = 90.dp)
+                                .padding(horizontal = 8.dp)
+                        )
+                    }
+                }
+
+                HorizontalDivider(color = borderColor, modifier = Modifier.padding(vertical = 2.dp))
+
+                // Data rows
+                rows.forEachIndexed { index, row ->
+                    val rowBg = if (index % 2 == 1) {
+                        if (isUserMessage) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.06f)
+                        else MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.35f)
+                    } else Color.Transparent
+
+                    Row(
+                        modifier = Modifier
+                            .background(rowBg, RoundedCornerShape(2.dp))
+                            .padding(vertical = 5.dp)
+                    ) {
+                        row.forEachIndexed { colIdx, cell ->
+                            Text(
+                                text = parseInlineMarkdown(cell.trim(), textColor, isUserMessage),
+                                fontSize = 12.sp,
+                                color = textColor,
+                                modifier = Modifier
+                                    .widthIn(min = 90.dp)
+                                    .padding(horizontal = 8.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -225,13 +329,11 @@ private fun BlockquoteItem(
  */
 fun sanitizeMarkdownText(raw: String): String {
     if (raw.isBlank()) return ""
-    // Remove DSML tags like < | DSML | calls> ... </ | DSML | calls> or variants
-    val cleaned = raw.replace(Regex("<\\s*[|｜]\\s*DSML\\s*[|｜]\\s*calls>.*?</\\s*[|｜]\\s*DSML\\s*[|｜]\\s*calls>", RegexOption.DOT_MATCHES_ALL), "")
+    return raw.replace(Regex("<\\s*[|｜]\\s*DSML\\s*[|｜]\\s*calls>.*?</\\s*[|｜]\\s*DSML\\s*[|｜]\\s*calls>", RegexOption.DOT_MATCHES_ALL), "")
         .replace(Regex("<\\s*[|｜]\\s*DSML\\s*[|｜][^>]*>", RegexOption.DOT_MATCHES_ALL), "")
         .replace(Regex("</\\s*[|｜]\\s*DSML\\s*[|｜][^>]*>", RegexOption.DOT_MATCHES_ALL), "")
         .replace(Regex("<\\s*[|｜]\\s*invoke[^>]*>.*?</\\s*[|｜]\\s*invoke>", RegexOption.DOT_MATCHES_ALL), "")
         .trim()
-    return cleaned
 }
 
 sealed class MarkdownBlock {
@@ -240,6 +342,7 @@ sealed class MarkdownBlock {
     data class CodeBlock(val language: String, val content: String) : MarkdownBlock()
     data class Blockquote(val content: String) : MarkdownBlock()
     data class ListItem(val content: String, val orderedPrefix: String? = null) : MarkdownBlock()
+    data class Table(val headers: List<String>, val rows: List<List<String>>) : MarkdownBlock()
     object Divider : MarkdownBlock()
 }
 
@@ -266,14 +369,31 @@ fun parseMarkdownBlocks(text: String): List<MarkdownBlock> {
             continue
         }
 
-        // 2. Horizontal Divider: --- or ***
+        // 2. Table: line has '|' and next line has '|' and '---'
+        if (trimmed.startsWith("|") && trimmed.endsWith("|") && i + 1 < lines.size) {
+            val nextTrimmed = lines[i + 1].trim()
+            if (nextTrimmed.startsWith("|") && nextTrimmed.contains("---")) {
+                val headers = trimmed.split("|").filter { it.isNotBlank() }
+                i += 2 // skip header and separator
+                val rows = mutableListOf<List<String>>()
+                while (i < lines.size && lines[i].trim().startsWith("|") && lines[i].trim().endsWith("|")) {
+                    val cells = lines[i].trim().split("|").filter { it.isNotBlank() }
+                    rows.add(cells)
+                    i++
+                }
+                blocks.add(MarkdownBlock.Table(headers = headers, rows = rows))
+                continue
+            }
+        }
+
+        // 3. Horizontal Divider: --- or ***
         if (trimmed == "---" || trimmed == "***" || trimmed == "___") {
             blocks.add(MarkdownBlock.Divider)
             i++
             continue
         }
 
-        // 3. Headings: #, ##, ###
+        // 4. Headings: #, ##, ###
         if (trimmed.startsWith("#")) {
             val level = trimmed.takeWhile { it == '#' }.length
             val headingText = trimmed.drop(level).trim()
@@ -282,7 +402,7 @@ fun parseMarkdownBlocks(text: String): List<MarkdownBlock> {
             continue
         }
 
-        // 4. Blockquote: > text
+        // 5. Blockquote: > text
         if (trimmed.startsWith(">")) {
             val quoteLines = mutableListOf<String>()
             var currentQuote = trimmed.removePrefix(">").trim()
@@ -296,7 +416,7 @@ fun parseMarkdownBlocks(text: String): List<MarkdownBlock> {
             continue
         }
 
-        // 5. Unordered List items: - item, * item, • item
+        // 6. Unordered List items: - item, * item, • item
         val isUnordered = trimmed.startsWith("- ") || trimmed.startsWith("* ") || trimmed.startsWith("• ")
         if (isUnordered) {
             val itemContent = trimmed.substring(2).trim()
@@ -305,7 +425,7 @@ fun parseMarkdownBlocks(text: String): List<MarkdownBlock> {
             continue
         }
 
-        // 6. Ordered List items: 1. item, 2. item
+        // 7. Ordered List items: 1. item, 2. item
         val orderedMatch = Regex("^([0-9]+)[.)]\\s+(.*)").find(trimmed)
         if (orderedMatch != null) {
             val num = orderedMatch.groupValues[1]
@@ -315,7 +435,7 @@ fun parseMarkdownBlocks(text: String): List<MarkdownBlock> {
             continue
         }
 
-        // 7. Regular paragraph / empty line
+        // 8. Regular paragraph / empty line
         if (trimmed.isNotBlank()) {
             blocks.add(MarkdownBlock.Paragraph(line))
         }
@@ -336,7 +456,7 @@ fun parseInlineMarkdown(
     val codeBg = if (isUserMessage) {
         Color.White.copy(alpha = 0.2f)
     } else {
-        Color(0xFF6750A4).copy(alpha = 0.1f)
+        Color(0xFF6750A4).copy(alpha = 0.12f)
     }
 
     return buildAnnotatedString {
@@ -370,7 +490,7 @@ fun parseInlineMarkdown(
                             background = codeBg
                         )
                     )
-                    append(" $inner ")
+                    append(inner)
                     pop()
                     cursor = end + 1
                     continue

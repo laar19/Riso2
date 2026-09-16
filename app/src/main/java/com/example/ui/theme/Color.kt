@@ -2,34 +2,32 @@ package com.example.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-val Purple80 = Color(0xFFD0BCFF)
-val PurpleGrey80 = Color(0xFFCCC2DC)
-val Pink80 = Color(0xFFEFB8C8)
+// Riso Unified M3 Palette - Titanium Neutral + Sapphire/Violet Accent
+val BrandPrimary       = Color(0xFF6750A4)
+val BrandOnPrimary     = Color.White
+val BrandSecondary     = Color(0xFF9A82DB)
+val BrandTertiary      = Color(0xFF386A20)
 
-val Purple40 = Color(0xFF6650a4)
-val PurpleGrey40 = Color(0xFF625b71)
-val Pink40 = Color(0xFF7D5260)
+// Dark (OLED-friendly: deep black canvas, elevated visible surfaces)
+val DarkBg             = Color(0xFF131314)
+val DarkSurface        = Color(0xFF1B1C1F)
+val DarkSurfaceHigh    = Color(0xFF242628)
+val DarkOutline        = Color(0xFF444746)
+val DarkText           = Color(0xFFE3E3E3)
+val DarkTextMuted      = Color(0xFF9E9E9E)
 
-// Riso Cosmic Indigo Dark palette
-val CosmicIndigo = Color(0xFF6C5DD3)
-val BrightIndigo = Color(0xFF818CF8)
-val CosmicLavender = Color(0xFFA78BFA)
-val GlowingCyan = Color(0xFF06B6D4)
-val DarkBackground = Color(0xFF0F101A)
-val SurfaceCard = Color(0xFF1D1E2C)
-val SurfaceCardSelected = Color(0xFF282A3A)
-val TextPrimary = Color(0xFFF3F4F6)
-val TextSecondary = Color(0xFF9CA3AF)
+// Light
+val LightBg            = Color(0xFFF6F6F8)
+val LightSurface       = Color(0xFFFFFFFF)
+val LightOutline       = Color(0xFFC4C4C7)
+val LightText          = Color(0xFF1F1F22)
+val LightTextMuted     = Color(0xFF5F5F63)
 
-// Sophisticated Dark design theme colors
-val SophisticatedBg = Color(0xFF111318)
-val SophisticatedPrimary = Color(0xFFD0BCFF)
-val SophisticatedOnPrimary = Color(0xFF381E72)
-val SophisticatedCard = Color(0xFF2D2F36) // #2D2F36
-val SophisticatedOutline = Color(0xFF44474F) // #44474F
-val SophisticatedInputBg = Color(0xFF1D1B20) // #1D1B20
-val SophisticatedTextPrimary = Color(0xFFE2E2E6) // #E2E2E6
-val SophisticatedTextSecondary = Color(0xFF919194) // #919194
-val SophisticatedWarning = Color(0xFFF2B8B5) // #F2B8B5
+// Status & Mode Accent Colors
+val StatusSuccess      = Color(0xFF10B981)
+val StatusSuccessDark  = Color(0xFF047857)
+val StatusError        = Color(0xFFEF4444)
+val StatusErrorDark    = Color(0xFFB91C1C)
+val StatusWarning      = Color(0xFFF59E0B)
 
 
