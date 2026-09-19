@@ -475,7 +475,7 @@ class LlmService {
                 return api.generateContent(model = modelToUse, key = resolvedKey, request = request)
             } else if (isClaude) {
                 if (customApiKey.isNullOrBlank()) {
-                    return getErrorResponse("⚠️ **Clave de API para Claude no configurada**\n\nPor favor, ingresa tu clave de Anthropic Claude en la pestaña Ajustes.")
+                    return getErrorResponse("Hace falta la API key.")
                 }
                 return callAnthropicClaude(
                     apiKey = customApiKey,
@@ -486,7 +486,7 @@ class LlmService {
             } else {
                 // OpenAI or OpenAI-Compatible (OpenCode, DeepSeek, Ollama, Groq, etc.)
                 if (customApiKey.isNullOrBlank()) {
-                    return getErrorResponse("⚠️ **Clave de API para $provider no configurada**\n\nPor favor, ingresa tu clave de API en Ajustes para el modelo **${modelName ?: "seleccionado"}**.")
+                    return getErrorResponse("Hace falta la API key.")
                 }
                 return callOpenAiCompatible(
                     endpointUrl = apiEndpoint ?: "",
@@ -760,36 +760,7 @@ class LlmService {
     }
 
     private fun getOfflineAssistantResponse(userMessage: String): String {
-        val lower = userMessage.lowercase()
-        val isEmail = lower.contains("correo") || lower.contains("email") || lower.contains("bandeja") || lower.contains("inbox") || lower.contains("mensaje") || lower.contains("buzón")
-        val isGit = lower.contains("git") || lower.contains("github") || lower.contains("gitlab") || lower.contains("repositorio") || lower.contains("issue")
-        val isSettings = lower.contains("clave") || lower.contains("api") || lower.contains("key") || lower.contains("ajustes") || lower.contains("configurar")
-        val isGreeting = lower.contains("hola") || lower.contains("buenos") || lower.contains("buenas") || lower.contains("saludos") || lower.contains("quien eres") || lower.contains("qué eres")
-
-        return buildString {
-            if (isEmail) {
-                append("📬 **Gestión de Correo y Bandeja Riso:**\n\n")
-                append("Detecté tu solicitud sobre tu correo o bandeja de entrada. Puedes interactuar con tus correos directamente:\n\n")
-                append("• Pulsa el botón **'+'** en la caja de texto para activar o configurar tu cuenta en **Conexiones MCP (Email)**.\n")
-                append("• Puedes pedirme: *\"revisa mi bandeja de entrada\"*, *\"dime cuántos correos sin leer tengo\"*, o *\"busca correos de soporte\"*.\n")
-                append("• Para activar resúmenes y respuestas con modelos de lenguaje avanzados, añade tu clave API en **Ajustes**.")
-            } else if (isGit) {
-                append("🐙 **Integración Git (GitHub / GitLab):**\n\n")
-                append("Riso incluye soporte para listar repositorios, consultar issues y crear tickets mediante Model Context Protocol (MCP).\n\n")
-                append("• Pulsa el botón **'+'** en el chat y selecciona la pestaña **GitHub / GitLab** para añadir tu token de acceso (PAT).\n")
-                append("• Con un token configurado, puedes pedirle a Riso: *\"lista mis repositorios\"*, *\"crea una issue en repo...\"*.")
-            } else if (isSettings) {
-                append("⚙️ Puedes configurar tus claves de API, cuentas y modelos en la pestaña **Ajustes**.\n\n")
-            } else if (isGreeting) {
-                append("¡Hola! Soy **Riso**, tu asistente de automatización y correos para Android con soporte MCP.\n\n")
-                append("Puedo ayudarte a revisar tu bandeja de correo, administrar tus repositorios de GitHub/GitLab, buscar información y más.\n\n")
-                append("💡 **Para activar respuestas generativas completas:**\n")
-                append("Ingresa tu clave de API (Gemini, Claude o DeepSeek) en la pestaña **Ajustes**.")
-            } else {
-                append("He recibido tu mensaje: \"$userMessage\".\n\nActualmente estoy operando en **Modo Asistente Local**.\n\n")
-                append("💡 Para habilitar respuestas generativas completas, añade tu clave API de Gemini o DeepSeek en la pestaña **Ajustes**.")
-            }
-        }
+        return "Hace falta la API key."
     }
 
     private fun getErrorResponse(msg: String): GeminiResponse {
