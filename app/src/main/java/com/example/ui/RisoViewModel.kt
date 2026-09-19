@@ -264,19 +264,32 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
 
             val sttProfilesJson = repository.getSetting("stt_profiles_json") ?: ""
             val activeSttId = repository.getSetting("active_stt_profile_id") ?: ""
-            if (sttProfilesJson.isNotBlank()) {
-                val parsedStt = parseSttProfiles(sttProfilesJson)
-                sttProfiles.value = parsedStt
-                if (parsedStt.any { it.id == activeSttId }) {
-                    activeSttProfileId.value = activeSttId
-                } else {
-                    activeSttProfileId.value = ""
-                    repository.saveSetting("active_stt_profile_id", "")
+            val localDefaultProfile = SttProfile(
+                id = "stt_local_default",
+                name = "Whisper Local (Offline)",
+                isLocal = true,
+                apiEndpoint = "",
+                modelName = "whisper-small-v3",
+                apiKey = ""
+            )
+
+            val parsedStt = if (sttProfilesJson.isNotBlank()) {
+                val list = parseSttProfiles(sttProfilesJson).toMutableList()
+                if (list.none { it.isLocal }) {
+                    list.add(0, localDefaultProfile)
                 }
+                list
             } else {
-                sttProfiles.value = emptyList()
-                activeSttProfileId.value = ""
-                repository.saveSetting("active_stt_profile_id", "")
+                listOf(localDefaultProfile)
+            }
+            sttProfiles.value = parsedStt
+            saveSttProfilesToDb(parsedStt)
+
+            if (parsedStt.any { it.id == activeSttId }) {
+                activeSttProfileId.value = activeSttId
+            } else {
+                activeSttProfileId.value = "stt_local_default"
+                repository.saveSetting("active_stt_profile_id", "stt_local_default")
             }
             
             // Purge leftover empty sessions on launch

@@ -1516,24 +1516,8 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
 fun EmptyChatState(
     modifier: Modifier = Modifier,
     isEn: Boolean,
-    onSelectPrompt: (String) -> Unit
+    onSelectPrompt: (String) -> Unit = {}
 ) {
-    val samplePrompts = if (isEn) {
-        listOf(
-            "📧 Summarize my recent emails",
-            "📝 Draft a weekly status report",
-            "🔍 Search tech news on the web",
-            "⚡ Plan and organize my daily tasks"
-        )
-    } else {
-        listOf(
-            "📧 Resumir mis correos recientes",
-            "📝 Redactar un reporte de estado",
-            "🔍 Buscar novedades tecnológicas en la web",
-            "⚡ Planificar y organizar mis tareas"
-        )
-    }
-
     Column(
         modifier = modifier
             .verticalScroll(rememberScrollState())
@@ -1546,12 +1530,12 @@ fun EmptyChatState(
         // Riso avatar with gentle radial gradient halo
         Box(
             modifier = Modifier
-                .size(76.dp)
+                .size(80.dp)
                 .clip(CircleShape)
                 .background(
                     Brush.radialGradient(
                         colors = listOf(
-                            MaterialTheme.colorScheme.primary.copy(alpha = 0.22f),
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.2f),
                             MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.5f),
                             Color.Transparent
                         )
@@ -1561,7 +1545,7 @@ fun EmptyChatState(
         ) {
             Box(
                 modifier = Modifier
-                    .size(54.dp)
+                    .size(56.dp)
                     .clip(CircleShape)
                     .background(MaterialTheme.colorScheme.surfaceContainerHigh)
                     .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.15f), CircleShape),
@@ -1582,53 +1566,14 @@ fun EmptyChatState(
             textAlign = androidx.compose.ui.text.style.TextAlign.Center
         )
 
-        Spacer(modifier = Modifier.height(6.dp))
+        Spacer(modifier = Modifier.height(8.dp))
 
         Text(
-            text = if (isEn) "Type a request or try one of these suggestions" else "Escribe tu consulta o prueba una de estas sugerencias",
+            text = if (isEn) "Start a conversation or send an inquiry" else "Inicia una conversación o envía una consulta",
             style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
             textAlign = androidx.compose.ui.text.style.TextAlign.Center
         )
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        // Suggestion prompt cards
-        Column(
-            modifier = Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            samplePrompts.forEach { prompt ->
-                Surface(
-                    onClick = { onSelectPrompt(prompt.substring(3).trim()) },
-                    shape = RoundedCornerShape(16.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainerLow,
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.12f)),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 14.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(
-                            text = prompt,
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.Medium,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Icon(
-                            imageVector = Icons.Default.ArrowForward,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-                }
-            }
-        }
 
         Spacer(modifier = Modifier.weight(1f, fill = false))
     }
@@ -2434,8 +2379,6 @@ fun EmailDetailDialog(
 @Composable
 fun RisoSettingsScreen(viewModel: RisoViewModel) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
-    val isTesting by viewModel.isTestingConnection.collectAsStateWithLifecycle()
-    val testResult by viewModel.connectionTestResult.collectAsStateWithLifecycle()
 
     val emailAccounts by viewModel.emailAccounts.collectAsStateWithLifecycle()
     val activeEmailAccountId by viewModel.activeEmailAccountId.collectAsStateWithLifecycle()
@@ -2559,7 +2502,7 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
                             ),
                             border = if (!isEn) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
                         ) {
-                            Text("🇪🇸 Español", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                            Text("Español", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
                         }
 
                         Button(
@@ -2574,7 +2517,7 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
                             ),
                             border = if (isEn) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
                         ) {
-                            Text("🇬🇧 English", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                            Text("English", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
                         }
                     }
                 }
@@ -2624,7 +2567,11 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
                             ),
                             border = if (!isDark) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
                         ) {
-                            Text("☀️ Modo Claro", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(RisoIcons.LightMode, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Modo Claro", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                            }
                         }
 
                         Button(
@@ -2639,7 +2586,11 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
                             ),
                             border = if (isDark) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
                         ) {
-                            Text("🌙 Modo Oscuro", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(RisoIcons.DarkMode, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Modo Oscuro", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                            }
                         }
                     }
                 }
@@ -3578,69 +3529,7 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
             }
         }
 
-        // Section 4: Connection tester
-        item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                shape = RoundedCornerShape(16.dp),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
-                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-            ) {
-                Column(modifier = Modifier.padding(14.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                            Text(
-                                text = "Probar Cuenta de Correo Activa",
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                            Text(
-                                text = "Verifica autenticación IMAP/SMTP",
-                                fontSize = 10.5.sp,
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                            )
-                        }
-
-                        Button(
-                            onClick = { viewModel.testEmailAuth() },
-                            modifier = Modifier
-                                .height(34.dp)
-                                .testTag("settings_test_connection_button"),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.primary,
-                                contentColor = MaterialTheme.colorScheme.onPrimary
-                            ),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
-                            shape = RoundedCornerShape(8.dp)
-                        ) {
-                            if (isTesting) {
-                                CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 1.5.dp, color = MaterialTheme.colorScheme.onPrimary)
-                            } else {
-                                Text("Probar Conexión", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                            }
-                        }
-                    }
-
-                    if (testResult != null) {
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Text(
-                            text = testResult!!,
-                            fontSize = 11.5.sp,
-                            fontFamily = FontFamily.Monospace,
-                            color = if (testResult!!.startsWith("¡Conexión IMAP Exitosa")) Color(0xFF10B981) else MaterialTheme.colorScheme.tertiary
-                        )
-                    }
-                }
-            }
-        }
-
-        // Section 5: Transparency, Data Privacy & Account Deletion (Google Play Compliance)
+        // Section 4: Transparency, Data Privacy & Account Deletion (Google Play Compliance)
         item {
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -3651,7 +3540,12 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
             ) {
                 Column(modifier = Modifier.padding(14.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("🛡️", fontSize = 18.sp)
+                        Icon(
+                            imageVector = RisoIcons.Security,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
                         Spacer(modifier = Modifier.width(8.dp))
                         Column {
                             Text(
@@ -3837,19 +3731,19 @@ fun RisoLogo(modifier: Modifier = Modifier) {
         // Draw individual lotus layers from back to front
         
         // 1 & 2: Base Leaf Support / Sepals
-        drawPetal(46/108f, 84/108f, 38/108f, 82/108f, 32/108f, 76/108f, 40/108f, 74/108f, 48/108f, 76/108f, Color(0xFF052E21))
-        drawPetal(62/108f, 84/108f, 70/108f, 82/108f, 76/108f, 76/108f, 68/108f, 74/108f, 60/108f, 76/108f, Color(0xFF052E21))
+        drawPetal(46/108f, 84/108f, 38/108f, 82/108f, 32/108f, 76/108f, 40/108f, 74/108f, 48/108f, 76/108f, Color(0xFF0C2340))
+        drawPetal(62/108f, 84/108f, 70/108f, 82/108f, 76/108f, 76/108f, 68/108f, 74/108f, 60/108f, 76/108f, Color(0xFF0C2340))
 
         // 3 & 4: Deep Outer Petals
-        drawPetal(20/108f, 78/108f, 14/108f, 62/108f, 24/108f, 50/108f, 30/108f, 53/108f, 38/108f, 60/108f, Color(0xFF065F46))
-        drawPetal(88/108f, 78/108f, 94/108f, 62/108f, 84/108f, 50/108f, 78/108f, 53/108f, 70/108f, 60/108f, Color(0xFF047857))
+        drawPetal(20/108f, 78/108f, 14/108f, 62/108f, 24/108f, 50/108f, 30/108f, 53/108f, 38/108f, 60/108f, Color(0xFF1E3A8A))
+        drawPetal(88/108f, 78/108f, 94/108f, 62/108f, 84/108f, 50/108f, 78/108f, 53/108f, 70/108f, 60/108f, Color(0xFF1D4ED8))
 
         // 5 & 6: Vibrant Inner Petals
-        drawPetal(34/108f, 73/108f, 28/108f, 53/108f, 38/108f, 40/108f, 43/108f, 46/108f, 48/108f, 56/108f, Color(0xFF10B981))
-        drawPetal(74/108f, 73/108f, 80/108f, 53/108f, 70/108f, 40/108f, 65/108f, 46/108f, 60/108f, 56/108f, Color(0xFF059669))
+        drawPetal(34/108f, 73/108f, 28/108f, 53/108f, 38/108f, 40/108f, 43/108f, 46/108f, 48/108f, 56/108f, Color(0xFF2563EB))
+        drawPetal(74/108f, 73/108f, 80/108f, 53/108f, 70/108f, 40/108f, 65/108f, 46/108f, 60/108f, 56/108f, Color(0xFF0284C7))
 
-        // 7: Central Rising Petal (On top, luminous mint highlight)
-        drawPetal(44/108f, 63/108f, 44/108f, 43/108f, 54/108f, 30/108f, 64/108f, 43/108f, 64/108f, 63/108f, Color(0xFFA7F3D0))
+        // 7: Central Rising Petal (On top, luminous sky highlight)
+        drawPetal(44/108f, 63/108f, 44/108f, 43/108f, 54/108f, 30/108f, 64/108f, 43/108f, 64/108f, 63/108f, Color(0xFF93C5FD))
 
         // 8: Center Spark Highlight at the core
         val sparkPath = Path().apply {

@@ -84,21 +84,30 @@ fun McpConnectionsDialog(
                 .padding(horizontal = 16.dp)
                 .padding(bottom = 16.dp)
         ) {
+                val (headerTitle, headerSubtitle) = when (mcpTabSelection) {
+                    0 -> "Cuentas de Correo" to "Gestiona tus cuentas IMAP y SMTP para consulta y envío"
+                    1 -> if (gitSubTabSelection == 0) "Cuentas de GitHub" to "Gestión de repositorios y actividad en GitHub"
+                         else "Cuentas de GitLab" to "Gestión de repositorios y proyectos en GitLab"
+                    2 -> "Búsqueda Web" to "Configuración del motor de búsqueda en tiempo real"
+                    3 -> "Archivos y Adjuntos" to "Captura de cámara, galería y documentos"
+                    else -> "Conexiones MCP" to "Herramientas y servicios conectados"
+                }
+
                 // Header
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column {
+                    Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                         Text(
-                            text = "Conexiones MCP",
+                            text = headerTitle,
                             fontWeight = FontWeight.ExtraBold,
                             fontSize = 16.sp,
                             color = MaterialTheme.colorScheme.primary
                         )
                         Text(
-                            text = "Gestiona tus cuentas de Correo, GitHub y GitLab",
+                            text = headerSubtitle,
                             fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                         )
@@ -127,7 +136,7 @@ fun McpConnectionsDialog(
                         onClick = { mcpTabSelection = 0 },
                         text = {
                             Text(
-                                text = "📬 Correo (${emailAccounts.size})",
+                                text = "Correo (${emailAccounts.size})",
                                 fontSize = 10.sp,
                                 fontWeight = if (mcpTabSelection == 0) FontWeight.Bold else FontWeight.Normal
                             )
@@ -138,7 +147,7 @@ fun McpConnectionsDialog(
                         onClick = { mcpTabSelection = 1 },
                         text = {
                             Text(
-                                text = "💻 Git (${githubAccounts.size + gitlabAccounts.size})",
+                                text = "Git (${githubAccounts.size + gitlabAccounts.size})",
                                 fontSize = 10.sp,
                                 fontWeight = if (mcpTabSelection == 1) FontWeight.Bold else FontWeight.Normal
                             )
@@ -149,7 +158,7 @@ fun McpConnectionsDialog(
                         onClick = { mcpTabSelection = 2 },
                         text = {
                             Text(
-                                text = "🌐 Web",
+                                text = "Web",
                                 fontSize = 10.sp,
                                 fontWeight = if (mcpTabSelection == 2) FontWeight.Bold else FontWeight.Normal
                             )
@@ -160,7 +169,7 @@ fun McpConnectionsDialog(
                         onClick = { mcpTabSelection = 3 },
                         text = {
                             Text(
-                                text = "📎 Adjuntos",
+                                text = "Adjuntos",
                                 fontSize = 10.sp,
                                 fontWeight = if (mcpTabSelection == 3) FontWeight.Bold else FontWeight.Normal
                             )
@@ -449,7 +458,7 @@ fun McpConnectionsDialog(
                                     ),
                                     contentPadding = PaddingValues(0.dp)
                                 ) {
-                                    Text("🐙 GitHub (${githubAccounts.size})", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    Text("GitHub (${githubAccounts.size})", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                 }
 
                                 Button(
@@ -464,7 +473,7 @@ fun McpConnectionsDialog(
                                     ),
                                     contentPadding = PaddingValues(0.dp)
                                 ) {
-                                    Text("🦊 GitLab (${gitlabAccounts.size})", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    Text("GitLab (${gitlabAccounts.size})", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                 }
                             }
 
