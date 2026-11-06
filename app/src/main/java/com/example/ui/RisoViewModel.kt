@@ -43,7 +43,7 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
     private val TAG = "RisoViewModel"
 
     private val database = RisoDatabase.getDatabase(application)
-    private val repository = RisoRepository(database.risoDao())
+    private val repository = RisoRepository(database.risoDao(), application)
     private val emailService = EmailService(repository)
     private val gitService = com.example.service.git.GitService()
     private val llmService = LlmService()
@@ -146,6 +146,9 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
     init {
         // Load default planning mode from database
         viewModelScope.launch {
+            // One-time startup migration from Room to hardware-backed SecureStore
+            repository.migrateSecretsIfNeeded()
+
             val savedMode = repository.getSetting("planning_mode")
             _planningMode.value = savedMode != "false"
 
@@ -153,7 +156,10 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
             val accountsJson = repository.getSetting("email_accounts_json") ?: ""
             val activeId = repository.getSetting("active_email_account_id") ?: ""
             if (accountsJson.isNotBlank()) {
-                val parsed = parseEmailAccounts(accountsJson).filter { !it.emailAddress.contains("riso.local", ignoreCase = true) }
+                val parsed = parseEmailAccounts(accountsJson).map { acc ->
+                    val sec = repository.getSecret("email_pass_${acc.id}") ?: acc.passwordVal
+                    acc.copy(passwordVal = sec)
+                }.filter { !it.emailAddress.contains("riso.local", ignoreCase = true) }
                 emailAccounts.value = parsed
                 if (parsed.any { it.id == activeId }) {
                     activeEmailAccountId.value = activeId
@@ -174,7 +180,7 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                         imapPort = "993",
                         smtpServer = repository.getSetting("smtp_server") ?: "",
                         smtpPort = "587",
-                        passwordVal = repository.getSetting("email_password") ?: ""
+                        passwordVal = repository.getSecret("email_password") ?: repository.getSetting("email_password") ?: ""
                     )
                     val newList = listOf(defaultAcc)
                     emailAccounts.value = newList
@@ -192,7 +198,10 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
             val profilesJson = repository.getSetting("llm_profiles_json") ?: ""
             val activeProfId = repository.getSetting("active_llm_profile_id") ?: ""
             if (profilesJson.isNotBlank()) {
-                val parsed = parseLlmProfiles(profilesJson).filter {
+                val parsed = parseLlmProfiles(profilesJson).map { prof ->
+                    val sec = repository.getSecret("llm_key_${prof.id}") ?: prof.apiKey
+                    prof.copy(apiKey = sec)
+                }.filter {
                     it.id != "init_gemini" || it.apiKey.isNotBlank()
                 }
                 llmProfiles.value = parsed
@@ -215,9 +224,12 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
             // Load GitHub & GitLab Accounts setup
             val githubJson = repository.getSetting("github_accounts_json") ?: ""
             if (githubJson.isNotBlank()) {
-                githubAccounts.value = parseGithubAccounts(githubJson)
+                githubAccounts.value = parseGithubAccounts(githubJson).map { acc ->
+                    val sec = repository.getSecret("github_token_${acc.id}") ?: acc.token
+                    acc.copy(token = sec)
+                }
             } else {
-                val legacyPat = repository.getSetting("github_pat") ?: ""
+                val legacyPat = repository.getSecret("github_pat") ?: repository.getSetting("github_pat") ?: ""
                 val legacyUser = repository.getSetting("github_username") ?: ""
                 if (legacyPat.isNotBlank() || legacyUser.isNotBlank()) {
                     val initialAcc = GithubAccount(
@@ -234,10 +246,13 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
 
             val gitlabJson = repository.getSetting("gitlab_accounts_json") ?: ""
             if (gitlabJson.isNotBlank()) {
-                gitlabAccounts.value = parseGitlabAccounts(gitlabJson)
+                gitlabAccounts.value = parseGitlabAccounts(gitlabJson).map { acc ->
+                    val sec = repository.getSecret("gitlab_token_${acc.id}") ?: acc.token
+                    acc.copy(token = sec)
+                }
             } else {
                 val legacyUrl = repository.getSetting("gitlab_url") ?: ""
-                val legacyPat = repository.getSetting("gitlab_pat") ?: ""
+                val legacyPat = repository.getSecret("gitlab_pat") ?: repository.getSetting("gitlab_pat") ?: ""
                 if (legacyPat.isNotBlank()) {
                     val initialAcc = GitlabAccount(
                         instanceUrl = legacyUrl.ifBlank { "https://gitlab.com" },
@@ -274,7 +289,10 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
             )
 
             val parsedStt = if (sttProfilesJson.isNotBlank()) {
-                val list = parseSttProfiles(sttProfilesJson).toMutableList()
+                val list = parseSttProfiles(sttProfilesJson).map { prof ->
+                    val sec = if (prof.isLocal) "" else (repository.getSecret("stt_key_${prof.id}") ?: prof.apiKey)
+                    prof.copy(apiKey = sec)
+                }.toMutableList()
                 if (list.none { it.isLocal }) {
                     list.add(0, localDefaultProfile)
                 }
@@ -348,9 +366,12 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                 obj.put("imapPort", acc.imapPort)
                 obj.put("smtpServer", acc.smtpServer)
                 obj.put("smtpPort", acc.smtpPort)
-                obj.put("passwordVal", acc.passwordVal)
+                obj.put("passwordVal", "") // Never store password in Room plaintext
                 obj.put("isEnabled", acc.isEnabled)
                 array.put(obj)
+                viewModelScope.launch {
+                    repository.saveSecret("email_pass_${acc.id}", acc.passwordVal)
+                }
             }
             viewModelScope.launch {
                 repository.saveSetting("email_accounts_json", array.toString())
@@ -419,6 +440,9 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
         val updated = emailAccounts.value.filter { it.id != id }
         emailAccounts.value = updated
         saveEmailAccountsToDb(updated)
+        viewModelScope.launch {
+            repository.deleteSecret("email_pass_$id")
+        }
         if (activeEmailAccountId.value == id) {
             if (updated.isNotEmpty()) {
                 selectActiveEmailAccount(updated.first().id)
@@ -461,10 +485,13 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                 val obj = org.json.JSONObject()
                 obj.put("id", acc.id)
                 obj.put("username", acc.username)
-                obj.put("token", acc.token)
+                obj.put("token", "") // Never in Room plaintext
                 obj.put("label", acc.label)
                 obj.put("isEnabled", acc.isEnabled)
                 array.put(obj)
+                viewModelScope.launch {
+                    repository.saveSecret("github_token_${acc.id}", acc.token)
+                }
             }
             viewModelScope.launch {
                 repository.saveSetting("github_accounts_json", array.toString())
@@ -488,7 +515,7 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
         saveGithubAccountsToDb(updated)
         viewModelScope.launch {
             repository.saveSetting("github_username", username.trim())
-            repository.saveSetting("github_pat", token.trim())
+            repository.saveSecret("github_pat", token.trim())
         }
     }
 
@@ -496,6 +523,9 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
         val updated = githubAccounts.value.filter { it.id != id }
         githubAccounts.value = updated
         saveGithubAccountsToDb(updated)
+        viewModelScope.launch {
+            repository.deleteSecret("github_token_$id")
+        }
     }
 
     fun toggleGithubAccount(id: String) {
@@ -576,10 +606,13 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                 obj.put("id", acc.id)
                 obj.put("instanceUrl", acc.instanceUrl)
                 obj.put("username", acc.username)
-                obj.put("token", acc.token)
+                obj.put("token", "") // Never in Room plaintext
                 obj.put("label", acc.label)
                 obj.put("isEnabled", acc.isEnabled)
                 array.put(obj)
+                viewModelScope.launch {
+                    repository.saveSecret("gitlab_token_${acc.id}", acc.token)
+                }
             }
             viewModelScope.launch {
                 repository.saveSetting("gitlab_accounts_json", array.toString())
@@ -605,7 +638,7 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
         saveGitlabAccountsToDb(updated)
         viewModelScope.launch {
             repository.saveSetting("gitlab_url", cleanUrl)
-            repository.saveSetting("gitlab_pat", token.trim())
+            repository.saveSecret("gitlab_pat", token.trim())
         }
     }
 
@@ -613,6 +646,9 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
         val updated = gitlabAccounts.value.filter { it.id != id }
         gitlabAccounts.value = updated
         saveGitlabAccountsToDb(updated)
+        viewModelScope.launch {
+            repository.deleteSecret("gitlab_token_$id")
+        }
     }
 
     fun toggleGitlabAccount(id: String) {
@@ -1192,7 +1228,9 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun handleFunctionCalling(sessionId: String, call: GeminiFunctionCall, depth: Int = 0) {
         val fName = call.name
         val args = call.args ?: emptyMap()
-        Log.d(TAG, "Function Call Invoked: $fName, Args: $args")
+        if (com.example.BuildConfig.DEBUG) {
+            Log.d(TAG, "executeFunction: $fName")
+        }
 
         val isWriteAction = fName in listOf(
             "send_email", "reply_to_email", "forward_email",
@@ -1282,7 +1320,9 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
         depth: Int = 0
     ) {
         if (depth > 2) {
-            Log.w(TAG, "Límite de recursión alcanzado para llamadas a herramientas")
+            if (com.example.BuildConfig.DEBUG) {
+                Log.w(TAG, "Límite de recursión alcanzado para llamadas a herramientas")
+            }
             return
         }
 
@@ -1290,7 +1330,9 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
         try {
             val name = call.name
             val args = call.args ?: emptyMap()
-            Log.d(TAG, "Ejecutando herramienta: $name con args: $args (Profundidad: $depth)")
+            if (com.example.BuildConfig.DEBUG) {
+                Log.d(TAG, "executeTool: $name")
+            }
 
             val resultObject = when (name) {
                 "list_inbox" -> {
@@ -1512,7 +1554,9 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
 
             // Post result back to LLM to get a structured verbal response in context
             val formattedResult = moshi.adapter(Map::class.java).toJson(resultObject)
-            Log.d(TAG, "Tool output returned to model: $formattedResult")
+            if (com.example.BuildConfig.DEBUG) {
+                Log.d(TAG, "handleFunctionCalling: $name")
+            }
 
             // CRITICAL FIX: In Gemini API Function Calling:
             // The history sent back to the model MUST contain:
@@ -1573,7 +1617,7 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
 
             val isGeminiProvider = provider.lowercase().contains("gemini")
             val isKeyMissing = if (isGeminiProvider) {
-                val rk = if (!key.isNullOrBlank()) key else com.example.BuildConfig.GEMINI_API_KEY
+                val rk = key?.trim() ?: ""
                 LlmService.isKeyInvalidOrPlaceholder(rk)
             } else {
                 key.isNullOrBlank()
@@ -1836,10 +1880,13 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                 obj.put("id", prof.id)
                 obj.put("name", prof.name)
                 obj.put("provider", prof.provider)
-                obj.put("apiKey", prof.apiKey)
+                obj.put("apiKey", "") // Never in Room plaintext
                 obj.put("apiEndpoint", prof.apiEndpoint)
                 obj.put("modelName", prof.modelName)
                 array.put(obj)
+                viewModelScope.launch {
+                    repository.saveSecret("llm_key_${prof.id}", prof.apiKey)
+                }
             }
             viewModelScope.launch {
                 repository.saveSetting("llm_profiles_json", array.toString())
@@ -1881,6 +1928,9 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
         val updatedList = llmProfiles.value.filter { it.id != profileId }
         llmProfiles.value = updatedList
         saveLlmProfilesToDb(updatedList)
+        viewModelScope.launch {
+            repository.deleteSecret("llm_key_$profileId")
+        }
         if (activeLlmProfileId.value == profileId) {
             val nextProfile = updatedList.firstOrNull()
             if (nextProfile != null) {
@@ -1940,8 +1990,13 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                 obj.put("isLocal", prof.isLocal)
                 obj.put("apiEndpoint", prof.apiEndpoint)
                 obj.put("modelName", prof.modelName)
-                obj.put("apiKey", prof.apiKey)
+                obj.put("apiKey", "") // Never in Room plaintext
                 array.put(obj)
+                if (!prof.isLocal && prof.apiKey.isNotBlank()) {
+                    viewModelScope.launch {
+                        repository.saveSecret("stt_key_${prof.id}", prof.apiKey)
+                    }
+                }
             }
             viewModelScope.launch {
                 repository.saveSetting("stt_profiles_json", array.toString())
@@ -1974,6 +2029,9 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
         val updated = sttProfiles.value.filter { it.id != profileId }
         sttProfiles.value = updated
         saveSttProfilesToDb(updated)
+        viewModelScope.launch {
+            repository.deleteSecret("stt_key_$profileId")
+        }
         if (activeSttProfileId.value == profileId) {
             val next = updated.firstOrNull()
             if (next != null) {
@@ -1996,7 +2054,7 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                 _sttProvider.value = if (profile.isLocal) "Whisper Local small-v3" else "Whisper API"
                 repository.saveSetting("selected_stt_provider", _sttProvider.value)
                 if (!profile.isLocal && profile.apiKey.isNotBlank()) {
-                    repository.saveSetting("whisper_api_key", profile.apiKey)
+                    repository.saveSecret("whisper_api_key", profile.apiKey)
                 }
             }
         }

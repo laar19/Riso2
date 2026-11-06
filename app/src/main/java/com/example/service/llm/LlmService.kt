@@ -355,27 +355,14 @@ class LlmService {
         internetSearchEnabled: Boolean = false,
         searchProvider: String = "duckduckgo_scraper"
     ): GeminiResponse {
-        val resolvedKey = if (!customApiKey.isNullOrBlank()) {
-            customApiKey
-        } else {
-            BuildConfig.GEMINI_API_KEY
-        }
+        val resolvedKey = customApiKey?.trim() ?: ""
 
         val isGemini = provider.lowercase().contains("gemini")
         if (isGemini && isKeyInvalidOrPlaceholder(resolvedKey)) {
-            Log.w(TAG, "Gemini API Key is not configured or is placeholder. Providing offline guidance.")
-            val lastUserMessage = history.lastOrNull { it.role == "user" }?.parts?.firstOrNull()?.text ?: ""
-            val lower = lastUserMessage.lowercase()
-            val isEmailCheck = lower.contains("inbox") ||
-                    lower.contains("bandeja") ||
-                    lower.contains("mailbox") ||
-                    // English combinations: check my inbox, check email, list emails, see emails, read inbox, my mail, unread emails, get emails, show emails
-                    ((lower.contains("email") || lower.contains("mail") || lower.contains("message")) &&
-                    (lower.contains("check") || lower.contains("inbox") || lower.contains("list") || lower.contains("show") || lower.contains("see") || lower.contains("read") || lower.contains("get") || lower.contains("fetch") || lower.contains("unread") || lower.contains("recent") || lower.contains("latest") || lower.contains("my") || lower.contains("any") || lower.contains("new"))) ||
-                    // Spanish combinations: revisar correo, ver mis correos, consultar bandeja, etc.
-                    ((lower.contains("correo") || lower.contains("buzón") || lower.contains("email") || lower.contains("mail") || lower.contains("mensaje")) &&
-                    (lower.contains("revis") || lower.contains("chequ") || lower.contains("le") || lower.contains("ver") || lower.contains("consult") || lower.contains("listar") || lower.contains("mostrar") || lower.contains("hay") || lower.contains("cuant") || lower.contains("dime") || lower.contains("teng") || lower.contains("nuev") || lower.contains("ultim") || lower.contains("recient") || lower.contains("mis") || lower.contains("pendient")))
-            if (isEmailCheck && mcpEmailEnabled) {
+            val lastUserMessage = history.lastOrNull { it.role == "user" }
+                ?.parts?.mapNotNull { it.text }?.joinToString(" ") ?: ""
+
+            if (mcpEmailEnabled && isInboxIntent(lastUserMessage)) {
                 return GeminiResponse(
                     candidates = listOf(
                         GeminiCandidate(
@@ -385,36 +372,21 @@ class LlmService {
                                     GeminiPart(
                                         functionCall = GeminiFunctionCall(
                                             name = "list_inbox",
-                                            args = mapOf("limit" to 10)
+                                            args = mapOf("limit" to 5)
                                         )
                                     )
                                 )
-                            )
+                            ),
+                            finishReason = "STOP"
                         )
                     )
                 )
             }
-            val isGithubRepos = lower.contains("github") && (lower.contains("repo") || lower.contains("proyect") || lower.contains("listar") || lower.contains("ver"))
-            if (isGithubRepos && mcpGithubEnabled) {
-                return GeminiResponse(
-                    candidates = listOf(
-                        GeminiCandidate(
-                            content = GeminiContent(
-                                role = "model",
-                                parts = listOf(
-                                    GeminiPart(
-                                        functionCall = GeminiFunctionCall(
-                                            name = "list_github_repositories",
-                                            args = mapOf("username" to githubUsername)
-                                        )
-                                    )
-                                )
-                            )
-                        )
-                    )
-                )
+
+            if (BuildConfig.DEBUG) {
+                Log.w(TAG, "Gemini API Key is not configured or is placeholder.")
             }
-            return getErrorResponse(getOfflineAssistantResponse(lastUserMessage))
+            return getErrorResponse("Hace falta la API key.")
         }
 
         try {
@@ -457,11 +429,11 @@ class LlmService {
             val isClaude = provider.equals("Claude", ignoreCase = true) || provider.contains("anthropic", ignoreCase = true)
 
             if (isGemini) {
-                val resolvedKey = if (!customApiKey.isNullOrBlank()) customApiKey else BuildConfig.GEMINI_API_KEY
                 if (isKeyInvalidOrPlaceholder(resolvedKey)) {
-                    Log.w(TAG, "Gemini API Key is not configured or is placeholder.")
-                    val lastUserMessage = history.lastOrNull { it.role == "user" }?.parts?.firstOrNull()?.text ?: ""
-                    return getErrorResponse(getOfflineAssistantResponse(lastUserMessage))
+                    if (BuildConfig.DEBUG) {
+                        Log.w(TAG, "Gemini API Key is not configured or is placeholder.")
+                    }
+                    return getErrorResponse("Hace falta la API key.")
                 }
 
                 val request = GeminiRequest(
@@ -757,6 +729,49 @@ class LlmService {
         } catch (e: Exception) {
             return@withContext getErrorResponse("Error al procesar respuesta de Claude: ${e.localizedMessage}")
         }
+    }
+
+    private fun isInboxIntent(text: String): Boolean {
+        val lower = text.lowercase().trim()
+            .replace("¿", "")
+            .replace("?", "")
+            .replace("¡", "")
+            .replace("!", "")
+            .trim()
+
+        if (lower.isEmpty()) return false
+        if (lower == "inbox" || lower == "bandeja" || lower == "correos" || lower == "emails") {
+            return true
+        }
+
+        val triggers = listOf(
+            "check my inbox",
+            "check my email",
+            "read my emails",
+            "read my email",
+            "show my inbox",
+            "list unread messages",
+            "list unread",
+            "revisa mi bandeja",
+            "ver mis correos",
+            "consultar inbox",
+            "correo nuevo",
+            "correos nuevos",
+            "mensajes nuevos",
+            "bandeja de entrada"
+        )
+        if (triggers.any { lower.contains(it) }) {
+            return true
+        }
+
+        val hasAction = lower.contains("check") || lower.contains("read") || lower.contains("show") ||
+                lower.contains("list") || lower.contains("revisa") || lower.contains("ver") ||
+                lower.contains("consultar") || lower.contains("tengo") || lower.contains("hay")
+        val hasTarget = lower.contains("inbox") || lower.contains("email") || lower.contains("emails") ||
+                lower.contains("correo") || lower.contains("correos") || lower.contains("bandeja") ||
+                lower.contains("mensaje") || lower.contains("mensajes")
+
+        return hasAction && hasTarget
     }
 
     private fun getOfflineAssistantResponse(userMessage: String): String {

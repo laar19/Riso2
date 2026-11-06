@@ -1,6 +1,7 @@
 package com.example.service.email
 
 import android.util.Log
+import com.example.BuildConfig
 import com.example.data.model.AppSetting
 import com.example.data.repository.RisoRepository
 import kotlinx.coroutines.Dispatchers
@@ -10,6 +11,7 @@ import java.util.*
 import javax.mail.*
 import javax.mail.internet.InternetAddress
 import javax.mail.internet.MimeMessage
+import javax.net.ssl.SSLHandshakeException
 
 data class RisoEmail(
     val id: String,
@@ -46,6 +48,25 @@ class EmailService(private val repository: RisoRepository) {
 
     private val TAG = "EmailService"
 
+    private fun isCertificateException(e: Throwable): Boolean {
+        var current: Throwable? = e
+        while (current != null) {
+            val name = current.javaClass.name
+            val message = current.message ?: ""
+            if (current is SSLHandshakeException ||
+                name.contains("CertPathValidatorException") ||
+                name.contains("SSLPeerUnverifiedException") ||
+                message.contains("CertPathValidatorException", ignoreCase = true) ||
+                message.contains("Trust anchor for certification path not found", ignoreCase = true) ||
+                (message.contains("certificate", ignoreCase = true) && (message.contains("valid", ignoreCase = true) || message.contains("untrusted", ignoreCase = true)))
+            ) {
+                return true
+            }
+            current = current.cause
+        }
+        return false
+    }
+
     suspend fun testEmailAccountConnection(acc: EmailAccount): Pair<Boolean, String> = withContext(Dispatchers.IO) {
         if (acc.emailAddress.isBlank() || acc.passwordVal.isBlank()) {
             return@withContext Pair(false, "Credenciales vacías")
@@ -56,7 +77,7 @@ class EmailService(private val repository: RisoRepository) {
                 put("mail.imaps.host", acc.imapServer.ifBlank { "imap.gmail.com" })
                 put("mail.imaps.port", acc.imapPort.ifBlank { "993" })
                 put("mail.imaps.ssl.enable", "true")
-                put("mail.imaps.ssl.trust", "*")
+                put("mail.imaps.ssl.checkserveridentity", "true")
                 put("mail.imaps.connectiontimeout", "8000")
                 put("mail.imaps.timeout", "8000")
             }
@@ -76,12 +97,18 @@ class EmailService(private val repository: RisoRepository) {
                 }
                 inbox.close(false)
             } catch (e: Exception) {
-                Log.w(TAG, "Notice reading inbox folder: ${e.message}")
+                if (BuildConfig.DEBUG) {
+                    Log.w(TAG, "testEmailAccountConnection notice: ${e.message}")
+                }
             }
             store.close()
             Pair(true, "Conectado ($count mensajes, $unread sin leer)")
         } catch (e: Exception) {
-            val msg = e.localizedMessage ?: e.message ?: "Fallo de autenticación IMAP"
+            val msg = if (isCertificateException(e)) {
+                "El certificado del servidor no es válido"
+            } else {
+                e.localizedMessage ?: e.message ?: "Fallo de autenticación IMAP"
+            }
             Pair(false, msg)
         }
     }
@@ -96,10 +123,13 @@ class EmailService(private val repository: RisoRepository) {
                 if (array.length() > 0) {
                     for (i in 0 until array.length()) {
                         val obj = array.getJSONObject(i)
-                        if (obj.optString("id") == activeId || obj.optString("emailAddress") == activeId) {
+                        val id = obj.optString("id")
+                        if (id == activeId || obj.optString("emailAddress") == activeId) {
+                            val pass = (if (id.isNotBlank()) repository.getSecret("email_pass_$id") else null)
+                                ?: obj.optString("passwordVal")
                             return mapOf(
                                 "email_address" to obj.optString("emailAddress"),
-                                "email_password" to obj.optString("passwordVal"),
+                                "email_password" to pass,
                                 "imap_server" to obj.optString("imapServer"),
                                 "imap_port" to obj.optString("imapPort", "993"),
                                 "smtp_server" to obj.optString("smtpServer"),
@@ -109,9 +139,12 @@ class EmailService(private val repository: RisoRepository) {
                     }
                     // Fallback to first configured account
                     val first = array.getJSONObject(0)
+                    val firstId = first.optString("id")
+                    val pass = (if (firstId.isNotBlank()) repository.getSecret("email_pass_$firstId") else null)
+                        ?: first.optString("passwordVal")
                     return mapOf(
                         "email_address" to first.optString("emailAddress"),
-                        "email_password" to first.optString("passwordVal"),
+                        "email_password" to pass,
                         "imap_server" to first.optString("imapServer"),
                         "imap_port" to first.optString("imapPort", "993"),
                         "smtp_server" to first.optString("smtpServer"),
@@ -119,14 +152,16 @@ class EmailService(private val repository: RisoRepository) {
                     )
                 }
             } catch (e: Exception) {
-                Log.e("EmailService", "Error parsing email_accounts_json", e)
+                if (BuildConfig.DEBUG) {
+                    Log.e(TAG, "getActiveCredentials error", e)
+                }
             }
         }
         
         // Fallback to legacy single-account settings
         return mapOf(
             "email_address" to (repository.getSetting("email_address") ?: ""),
-            "email_password" to (repository.getSetting("email_password") ?: ""),
+            "email_password" to (repository.getSecret("email_password") ?: repository.getSetting("email_password") ?: ""),
             "imap_server" to (repository.getSetting("imap_server") ?: ""),
             "imap_port" to (repository.getSetting("imap_port") ?: "993"),
             "smtp_server" to (repository.getSetting("smtp_server") ?: ""),
@@ -138,39 +173,69 @@ class EmailService(private val repository: RisoRepository) {
     private val mockEmails = mutableListOf(
         RisoEmail(
             id = "msg_101",
-            sender = "ana.perez@empresa.com",
-            recipient = "",
-            subject = "Reunión del Proyecto Riso - Urgente",
-            snippet = "Hola team, necesitamos reconfirmar los entregables de Riso para este viernes...",
-            body = "Hola team,\n\nNecesitamos reconfirmar los entregables de Riso para este viernes. Por favor, revisen el roadmap y avísenme si tienen comentarios. La presentación principal es a las 10:00 AM.\n\nSaludos,\nAna Pérez\nProject Leader",
-            date = "Hoy, 10:30 AM",
+            sender = "soporte@cloudservice.com",
+            recipient = "yo@empresa.com",
+            subject = "Alerta de Servidor: Uso de CPU > 92%",
+            snippet = "Hemos detectado un pico anómalo de consumo en la instancia de base de datos...",
+            body = "Estimado cliente,\n\nLe informamos que el nodo db-primary-01 superó el umbral del 92% de CPU durante los últimos 15 minutos.\n\nAcción recomendada: Verificar procesos activos o escalar recursos.\n\nSoporte Técnico CloudService.",
+            date = "Hoy, 10:14 AM",
             isRead = false
         ),
         RisoEmail(
             id = "msg_102",
-            sender = "marketing@ofertas.com",
-            recipient = "",
-            subject = "¡Última oportunidad! 50% de descuento en servidores cloud",
-            snippet = "Mejora tus despliegues hoy mismo con nuestro cupón exclusivo RISOCLOUD...",
-            body = "Estimado cliente,\n\nNo dejes pasar esta gran oferta. Usa el cupón RISOCLOUD para obtener 50% de descuento mensual en tus instancias de servidor cloud. Válido hasta la medianoche.\n\nSuscríbete ya.",
-            date = "Ayer, 4:15 PM",
+            sender = "laura.marketing@agenciadigital.com",
+            recipient = "yo@empresa.com",
+            subject = "Revisión final de diseño: Campaña Q3",
+            snippet = "Hola equipo, comparto el enlace de Figma con los mockups aprobados por cliente...",
+            body = "Hola equipo,\n\nYa tenemos los últimos ajustes en la paleta de colores y componentes según el feedback de ayer. Por favor confirmen si pasamos a producción.\n\nSaludos,\nLaura.",
+            date = "Ayer, 4:45 PM",
             isRead = true
         ),
         RisoEmail(
             id = "msg_103",
-            sender = "coordinacion@universidad.edu.ar",
-            recipient = "",
-            subject = "Certificado Analítico Digital Disponible",
-            snippet = "Estimado alumno, le informamos que el reporte académico ha sido cargado en su portal...",
-            body = "Estimando alumno,\n\nLe informamos que su Certificado Analítico Digital ya se encuentra listo para descargar en su panel general de autogestión.\n\nAtentamente,\nSecretaría Académica",
-            date = "14 Jun 2026, 9:00 AM",
+            sender = "notificaciones@github.com",
+            recipient = "yo@empresa.com",
+            subject = "[GitHub] Pull Request #42 merged into main",
+            snippet = "feature/agent-integration successfully merged by lead-dev...",
+            body = "Your pull request #42 (Feature: Agent planning protocol) was successfully merged into main branch.\n\nAll automated CI checks passed.",
+            date = "Ayer, 11:20 AM",
             isRead = true
         ),
         RisoEmail(
             id = "msg_104",
-            sender = "juan.marquez@tecnologia.com",
-            recipient = "",
-            subject = "Presupuestos de Licenciamiento",
+            sender = "recursoshumanos@corporativo.com",
+            recipient = "yo@empresa.com",
+            subject = "Recordatorio: Cierre de Evaluaciones de Desempeño",
+            snippet = "Estimado colaborador, le recordamos completar su autoevaluación antes del viernes...",
+            body = "Estimado colaborador,\n\nEl periodo de evaluación semestral cierra este viernes a las 18:00hs. Por favor ingrese al portal de RRHH para completar su formulario.\n\nAtentamente,\nDirección de Talento Humano.",
+            date = "08 Jun 2026, 9:00 AM",
+            isRead = true
+        ),
+        RisoEmail(
+            id = "msg_105",
+            sender = "facturacion@telecom.net",
+            recipient = "yo@empresa.com",
+            subject = "Factura de Servicios Digitales - Mayo 2026",
+            snippet = "Adjuntamos su comprobante de pago mensual correspondiente al abono de fibra óptica...",
+            body = "Estimado cliente,\n\nSe ha emitido su factura digital por el periodo Mayo 2026 por un total de $45.00.\n\nFecha de vencimiento: 20 de Junio.\n\nGracias por su confianza.",
+            date = "05 Jun 2026, 6:12 PM",
+            isRead = true
+        ),
+        RisoEmail(
+            id = "msg_106",
+            sender = "newsletter@techinsider.io",
+            recipient = "yo@empresa.com",
+            subject = "Tech Weekly: Modelos Locales en Móviles y Edge AI",
+            snippet = "Descubre las últimas técnicas de cuantización 4-bit ejecutadas en procesadores ARM...",
+            body = "Hola a todos,\n\nEn esta edición exploramos cómo los pequeños modelos de lenguaje y visión están transformando la privacidad de las aplicaciones móviles sin necesidad de nube centralizada.\n\n¡Que lo disfruten!",
+            date = "01 Jun 2026, 8:00 AM",
+            isRead = true
+        ),
+        RisoEmail(
+            id = "msg_107",
+            sender = "martin.finanzas@startup.org",
+            recipient = "yo@empresa.com",
+            subject = "Presupuesto Operativo Q3 y Licencias",
             snippet = "Hola, adjunto los montos finales para la renovación de las API keys empresariales...",
             body = "Hola Juan,\n\nAquí tienes las estimaciones finales para renovar las API en la nube para el próximo semestre. Por favor revísalo con la mesa de control.\n\nSaludos cordiales.",
             date = "12 Jun 2026, 2:30 PM",
@@ -186,8 +251,11 @@ class EmailService(private val repository: RisoRepository) {
         val email = creds["email_address"] ?: ""
         val password = creds["email_password"] ?: ""
 
-        if (smtpServer.isBlank() || email.isBlank() || password.isBlank()) {
-            Log.d(TAG, "[MOCK] Sending email to $to, Subject: $subject")
+        val isMockAccount = email.endsWith("@riso.local") || imapServerMockCheck(creds["imap_server"] ?: "") || smtpServer.contains("riso.local")
+        if (smtpServer.isBlank() || email.isBlank() || password.isBlank() || isMockAccount) {
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "sendEmail (MOCK)")
+            }
             // Mock send addition
             val newMock = RisoEmail(
                 id = "msg_sent_" + System.currentTimeMillis(),
@@ -204,11 +272,20 @@ class EmailService(private val repository: RisoRepository) {
         }
 
         try {
+            val isSslPort = smtpPort.trim() == "465"
             val properties = Properties().apply {
                 put("mail.smtp.auth", "true")
-                put("mail.smtp.starttls.enable", "true")
                 put("mail.smtp.host", smtpServer)
-                put("mail.smtp.port", smtpPort.ifBlank { "587" })
+                put("mail.smtp.port", smtpPort.ifBlank { if (isSslPort) "465" else "587" })
+                put("mail.smtp.ssl.checkserveridentity", "true")
+                if (isSslPort) {
+                    put("mail.smtp.ssl.enable", "true")
+                } else {
+                    put("mail.smtp.starttls.enable", "true")
+                    put("mail.smtp.starttls.required", "true")
+                }
+                put("mail.smtp.connectiontimeout", "10000")
+                put("mail.smtp.timeout", "10000")
             }
 
             val session = Session.getInstance(properties, object : Authenticator() {
@@ -225,12 +302,24 @@ class EmailService(private val repository: RisoRepository) {
             }
 
             Transport.send(message)
-            Log.d(TAG, "SMTP email sent successfully to $to")
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "sendEmail (SMTP)")
+            }
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Error sending SMTP email: ${e.message}", e)
+            if (BuildConfig.DEBUG) {
+                if (isCertificateException(e)) {
+                    Log.e(TAG, "El certificado del servidor no es válido")
+                } else {
+                    Log.e(TAG, "sendEmail (SMTP) error", e)
+                }
+            }
             false
         }
+    }
+
+    private fun imapServerMockCheck(imap: String): Boolean {
+        return imap.contains("riso.local")
     }
 
     // Fetch inbox summary with counts and filter support
@@ -242,7 +331,9 @@ class EmailService(private val repository: RisoRepository) {
         val password = creds["email_password"] ?: ""
 
         if (imapServer.isBlank() || email.isBlank() || password.isBlank()) {
-            Log.d(TAG, "[MOCK] Listing inbox summary")
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "fetchInboxSummary (MOCK)")
+            }
             val isUnreadOnly = filter?.contains("unread", ignoreCase = true) == true
             val filtered = if (isUnreadOnly) mockEmails.filter { !it.isRead } else mockEmails
             return@withContext InboxSummary(
@@ -257,15 +348,18 @@ class EmailService(private val repository: RisoRepository) {
         try {
             return@withContext fetchEmailsFromImapDetailed(imapServer, email, password, imapPort, "INBOX", limit, filter)
         } catch (e: Exception) {
-            val errDetail = e.localizedMessage ?: e.message ?: "Error de conexión"
-            Log.e(TAG, "Error listing inbox via IMAP for $email ($imapServer): $errDetail", e)
+            val isCert = isCertificateException(e)
+            val errDetail = if (isCert) "El certificado del servidor no es válido" else (e.localizedMessage ?: e.message ?: "Error de conexión")
+            if (BuildConfig.DEBUG) {
+                Log.e(TAG, "fetchInboxSummary error: $errDetail", e)
+            }
             return@withContext InboxSummary(
                 emails = emptyList(),
                 totalCount = 0,
                 unreadCount = 0,
                 accountEmail = email,
                 isLiveImap = false,
-                errorMessage = "⚠️ No se pudo conectar a IMAP ($imapServer): $errDetail. Verifica tu contraseña de aplicación y que IMAP esté habilitado."
+                errorMessage = if (isCert) "⚠️ El certificado del servidor no es válido" else "⚠️ No se pudo conectar a IMAP ($imapServer): $errDetail. Verifica tu contraseña de aplicación y que IMAP esté habilitado."
             )
         }
     }
@@ -283,7 +377,9 @@ class EmailService(private val repository: RisoRepository) {
         val password = creds["email_password"] ?: ""
 
         if (imapServer.isBlank() || email.isBlank() || password.isBlank()) {
-            Log.d(TAG, "[MOCK] Searching inbox for: '$query'")
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "searchEmails (MOCK)")
+            }
             val lowercaseQuery = query.lowercase()
             return@withContext mockEmails.filter {
                 it.subject.lowercase().contains(lowercaseQuery) ||
@@ -302,7 +398,9 @@ class EmailService(private val repository: RisoRepository) {
                         it.body.lowercase().contains(lowercaseQuery)
             }.take(limit)
         } catch (e: Exception) {
-            Log.e(TAG, "Error searching email via IMAP, falling back to mock search: ${e.message}")
+            if (BuildConfig.DEBUG) {
+                Log.e(TAG, "searchEmails error", e)
+            }
             val lowercaseQuery = query.lowercase()
             return@withContext mockEmails.filter {
                 it.subject.lowercase().contains(lowercaseQuery) ||
@@ -317,9 +415,8 @@ class EmailService(private val repository: RisoRepository) {
         // Look in mock first
         val mockEmail = mockEmails.find { it.id == id }
         if (mockEmail != null) {
-            // mark read locally
             val index = mockEmails.indexOf(mockEmail)
-            if (index != -1) {
+            if (index != -1 && !mockEmail.isRead) {
                 mockEmails[index] = mockEmail.copy(isRead = true)
             }
             return@withContext mockEmails[index]
@@ -339,6 +436,10 @@ class EmailService(private val repository: RisoRepository) {
                 put("mail.store.protocol", "imaps")
                 put("mail.imaps.host", imapServer)
                 put("mail.imaps.port", "993")
+                put("mail.imaps.ssl.enable", "true")
+                put("mail.imaps.ssl.checkserveridentity", "true")
+                put("mail.imaps.connectiontimeout", "10000")
+                put("mail.imaps.timeout", "10000")
             }
             val session = Session.getDefaultInstance(properties, null)
             val store = session.getStore("imaps")
@@ -367,10 +468,14 @@ class EmailService(private val repository: RisoRepository) {
                 store.close()
                 return@withContext riso
             }
+
             inbox.close(false)
             store.close()
         } catch (e: Exception) {
-            Log.e(TAG, "Error reading message via IMAP: ${e.message}")
+            if (BuildConfig.DEBUG) {
+                Log.e(TAG, "readEmail error", e)
+            }
+            return@withContext null
         }
         null
     }
@@ -381,7 +486,9 @@ class EmailService(private val repository: RisoRepository) {
         val senderTarget = original?.sender ?: "coordinacion@universidad.edu.ar"
         val subjectTarget = original?.subject?.let { if (it.startsWith("Re:")) it else "Re: $it" } ?: "Re: Correo"
         
-        Log.d(TAG, "Replying to message $messageId, sending to $senderTarget")
+        if (BuildConfig.DEBUG) {
+            Log.d(TAG, "replyToEmail")
+        }
         sendEmail(senderTarget, subjectTarget, body)
     }
 
@@ -394,7 +501,9 @@ class EmailService(private val repository: RisoRepository) {
         val forwardSubject = "Fwd: $originalSubject"
         val forwardBody = "$body\n\n---------- Forwarded message ----------\nFrom: ${original?.sender}\nDate: ${original?.date}\nSubject: $originalSubject\n\n$originalBody"
         
-        Log.d(TAG, "Forwarding message $messageId to $to")
+        if (BuildConfig.DEBUG) {
+            Log.d(TAG, "forwardEmail")
+        }
         sendEmail(to, forwardSubject, forwardBody)
     }
 
@@ -419,7 +528,9 @@ class EmailService(private val repository: RisoRepository) {
                 setImapMessageFlag(imapServer, email, password, id.toIntOrNull(), Flags.Flag.SEEN, true)
                 return@withContext true
             } catch (e: Exception) {
-                Log.e(TAG, "Error setting SEEN IMAP: ${e.message}")
+                if (BuildConfig.DEBUG) {
+                    Log.e(TAG, "markAsRead error", e)
+                }
             }
         }
         false
@@ -446,7 +557,9 @@ class EmailService(private val repository: RisoRepository) {
                 setImapMessageFlag(imapServer, email, password, id.toIntOrNull(), Flags.Flag.SEEN, false)
                 return@withContext true
             } catch (e: Exception) {
-                Log.e(TAG, "Error clearing SEEN IMAP: ${e.message}")
+                if (BuildConfig.DEBUG) {
+                    Log.e(TAG, "markAsUnread error", e)
+                }
             }
         }
         false
@@ -460,7 +573,9 @@ class EmailService(private val repository: RisoRepository) {
             mockEmails.remove(mockEmail)
             return@withContext true
         }
-        Log.d(TAG, "Archived email $id successfully")
+        if (BuildConfig.DEBUG) {
+            Log.d(TAG, "archiveEmail")
+        }
         true
     }
 
@@ -482,13 +597,14 @@ class EmailService(private val repository: RisoRepository) {
                 setImapMessageFlag(imapServer, email, password, id.toIntOrNull(), Flags.Flag.DELETED, true)
                 return@withContext true
             } catch (e: Exception) {
-                Log.e(TAG, "Error setting DELETED IMAP: ${e.message}")
+                if (BuildConfig.DEBUG) {
+                    Log.e(TAG, "deleteEmail error", e)
+                }
             }
         }
         false
     }
 
-    // Helper functions for actual IMAP connection
     private fun fetchEmailsFromImapDetailed(
         host: String,
         user: String,
@@ -503,7 +619,7 @@ class EmailService(private val repository: RisoRepository) {
             put("mail.imaps.host", host)
             put("mail.imaps.port", port.ifBlank { "993" })
             put("mail.imaps.ssl.enable", "true")
-            put("mail.imaps.ssl.trust", "*")
+            put("mail.imaps.ssl.checkserveridentity", "true")
             put("mail.imaps.connectiontimeout", "10000")
             put("mail.imaps.timeout", "10000")
         }
@@ -540,32 +656,38 @@ class EmailService(private val repository: RisoRepository) {
             if (totalCount > 0) inbox.getMessages(start, end) else emptyArray()
         }
 
-        val risoEmails = mutableListOf<RisoEmail>()
+        val risoList = mutableListOf<RisoEmail>()
         for (i in messages.indices.reversed()) {
-            val message = messages[i]
-            val content = try {
-                getTextFromMessage(message)
+            val m = messages[i]
+            val fromStr = m.from?.firstOrNull()?.toString() ?: "Desconocido"
+            val subj = m.subject ?: "(Sin Asunto)"
+            val seen = m.isSet(Flags.Flag.SEEN)
+            val preview = try {
+                val text = getTextFromMessage(m)
+                if (text.length > 90) text.substring(0, 90) + "..." else text
             } catch (e: Exception) {
-                "Contenido codificado no legible"
+                "(No preview)"
             }
-            risoEmails.add(
+
+            risoList.add(
                 RisoEmail(
-                    id = message.messageNumber.toString(),
-                    sender = message.from?.firstOrNull()?.toString() ?: "Desconocido",
+                    id = m.messageNumber.toString(),
+                    sender = fromStr,
                     recipient = user,
-                    subject = message.subject ?: "(Sin Asunto)",
-                    snippet = if (content.length > 80) content.substring(0, 80) + "..." else content,
-                    body = content,
-                    date = message.sentDate?.toString() ?: "",
-                    isRead = message.isSet(Flags.Flag.SEEN)
+                    subject = subj,
+                    snippet = preview,
+                    body = preview,
+                    date = m.sentDate?.toString() ?: "",
+                    isRead = seen
                 )
             )
         }
 
         inbox.close(false)
         store.close()
+
         return InboxSummary(
-            emails = risoEmails,
+            emails = risoList,
             totalCount = totalCount,
             unreadCount = unreadCount,
             accountEmail = user,
@@ -596,6 +718,10 @@ class EmailService(private val repository: RisoRepository) {
             put("mail.store.protocol", "imaps")
             put("mail.imaps.host", host)
             put("mail.imaps.port", "993")
+            put("mail.imaps.ssl.enable", "true")
+            put("mail.imaps.ssl.checkserveridentity", "true")
+            put("mail.imaps.connectiontimeout", "10000")
+            put("mail.imaps.timeout", "10000")
         }
 
         val session = Session.getDefaultInstance(properties, null)
@@ -632,11 +758,10 @@ class EmailService(private val repository: RisoRepository) {
         for (i in 0 until count) {
             val bodyPart = mimeMultipart.getBodyPart(i)
             if (bodyPart.isMimeType("text/plain")) {
-                return bodyPart.content.toString()
+                multipartSubText.append(bodyPart.content.toString())
             } else if (bodyPart.isMimeType("text/html")) {
-                // Strips HTML minimally
-                val html = bodyPart.content as String
-                return android.text.Html.fromHtml(html, android.text.Html.FROM_HTML_MODE_LEGACY).toString()
+                val html = bodyPart.content.toString()
+                multipartSubText.append(android.text.Html.fromHtml(html, android.text.Html.FROM_HTML_MODE_LEGACY).toString())
             } else if (bodyPart.content is Multipart) {
                 multipartSubText.append(getTextFromMimeMultipart(bodyPart.content as Multipart))
             }

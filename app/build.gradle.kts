@@ -71,6 +71,9 @@ android {
 secrets {
   propertiesFileName = ".env"
   defaultPropertiesFileName = ".env.example"
+  // Do not generate GEMINI_API_KEY in release (BYOK architecture)
+  ignoreList.add("key:GEMINI_API_KEY")
+  ignoreList.add("GEMINI_API_KEY")
 }
 
 // Some unused dependencies are commented out below instead of being removed.
