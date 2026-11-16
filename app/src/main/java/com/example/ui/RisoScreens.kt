@@ -6,8 +6,11 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import com.example.service.audio.OnDeviceSpeechRecognizerHelper
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
@@ -596,6 +599,10 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
     val isRecordingAudio by viewModel.isRecordingAudio.collectAsStateWithLifecycle()
     val isTranscribingAudio by viewModel.isTranscribingAudio.collectAsStateWithLifecycle()
     val recordingFeedback by viewModel.recordingFeedback.collectAsStateWithLifecycle()
+    val sttRmsLevel by viewModel.sttRmsLevel.collectAsStateWithLifecycle()
+    val sttEngineMode by viewModel.sttEngineMode.collectAsStateWithLifecycle()
+    val sttSystemWarning by viewModel.sttSystemWarning.collectAsStateWithLifecycle()
+    val pendingSttDownloadLang by viewModel.pendingSttDownloadLang.collectAsStateWithLifecycle()
     val attachedImage by viewModel.attachedImage.collectAsStateWithLifecycle()
     val attachments by viewModel.attachments.collectAsStateWithLifecycle()
     val loadingStatusText by viewModel.loadingStatusText.collectAsStateWithLifecycle()
@@ -677,34 +684,49 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
             .fillMaxSize()
             .imePadding()
     ) {
-        // Warning bar for downloading local Whisper models Offline
-        if (sttProvider == "Whisper Local small-v3" && whisperStatus != "Ready") {
+        // System STT fallback privacy warning banner
+        val activeSttWarning = sttSystemWarning
+        if (activeSttWarning != null) {
             Spacer(modifier = Modifier.height(4.dp))
-            Row(
+            Surface(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 12.dp)
-                    .background(MaterialTheme.colorScheme.tertiary.copy(alpha = 0.12f), RoundedCornerShape(8.dp))
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                    .testTag("stt_system_warning_banner"),
+                color = StatusWarning.copy(alpha = 0.14f),
+                shape = RoundedCornerShape(10.dp),
+                border = BorderStroke(1.dp, StatusWarning.copy(alpha = 0.35f))
             ) {
-                Text(
-                    text = t("download_whisper_warn"),
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.tertiary,
-                    modifier = Modifier.weight(1f)
-                )
-                Text(
-                    text = t("download_now"),
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier
-                        .clickable { viewModel.downloadLocalWhisper() }
-                        .padding(horizontal = 4.dp)
-                )
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Default.Warning,
+                        contentDescription = "Aviso STT",
+                        tint = StatusWarning,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = activeSttWarning,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(
+                        onClick = { viewModel.dismissSttSystemWarning() },
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = "Cerrar aviso",
+                            modifier = Modifier.size(14.dp),
+                            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                        )
+                    }
+                }
             }
         }
 
@@ -1056,7 +1078,22 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
-                    if (isRecordingAudio) {
+                    if (pendingSttDownloadLang != null && !isRecordingAudio) {
+                        TextButton(
+                            onClick = { viewModel.triggerOnDeviceSpeechModelDownload() },
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                            modifier = Modifier
+                                .heightIn(min = 48.dp)
+                                .testTag("stt_download_language_btn")
+                        ) {
+                            Text(
+                                text = "Descargar ($pendingSttDownloadLang)",
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    } else if (isRecordingAudio) {
                         TextButton(
                             onClick = {
                                 viewModel.stopAudioRecordingAndTranscribe { transcription ->
@@ -1388,7 +1425,17 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
                         })
                     )
 
-                    // STT Microphone button (48dp touch target)
+                    // STT Microphone button (48dp touch target) animated by onRmsChanged voice level
+                    val animatedRmsScale by animateFloatAsState(
+                        targetValue = if (isRecordingAudio) 1f + (sttRmsLevel * 0.55f) else 1f,
+                        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+                        label = "mic_rms_halo_scale"
+                    )
+                    val animatedMicScale by animateFloatAsState(
+                        targetValue = if (isRecordingAudio) 1f + (sttRmsLevel * 0.16f) else 1f,
+                        animationSpec = spring(stiffness = Spring.StiffnessMedium),
+                        label = "mic_rms_inner_scale"
+                    )
                     IconButton(
                         onClick = {
                             if (isRecordingAudio) {
@@ -1406,35 +1453,51 @@ fun RisoChatScreen(viewModel: RisoViewModel) {
                             .size(48.dp)
                             .testTag("chat_stt_microphone")
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(34.dp)
-                                .clip(CircleShape)
-                                .background(
-                                    if (isRecordingAudio) MaterialTheme.colorScheme.error.copy(alpha = 0.2f)
-                                    else if (isTranscribingAudio) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
-                                    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
-                                ),
-                            contentAlignment = Alignment.Center
-                        ) {
+                        Box(contentAlignment = Alignment.Center) {
                             if (isRecordingAudio) {
                                 Box(
                                     modifier = Modifier
-                                        .size(12.dp)
-                                        .clip(RoundedCornerShape(3.dp))
-                                        .background(MaterialTheme.colorScheme.error)
+                                        .size(34.dp)
+                                        .scale(animatedRmsScale)
+                                        .clip(CircleShape)
+                                        .background(
+                                            MaterialTheme.colorScheme.error.copy(
+                                                alpha = (0.14f + sttRmsLevel * 0.30f).coerceIn(0.14f, 0.45f)
+                                            )
+                                        )
                                 )
-                            } else if (isTranscribingAudio) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(16.dp),
-                                    strokeWidth = 2.dp,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                            } else {
-                                Text(
-                                    text = "🎙️",
-                                    fontSize = 15.sp
-                                )
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .size(34.dp)
+                                    .scale(animatedMicScale)
+                                    .clip(CircleShape)
+                                    .background(
+                                        if (isRecordingAudio) MaterialTheme.colorScheme.error.copy(alpha = 0.22f)
+                                        else if (isTranscribingAudio) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (isRecordingAudio) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(12.dp)
+                                            .clip(RoundedCornerShape(3.dp))
+                                            .background(MaterialTheme.colorScheme.error)
+                                    )
+                                } else if (isTranscribingAudio) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        strokeWidth = 2.dp,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                } else {
+                                    Text(
+                                        text = "🎙️",
+                                        fontSize = 15.sp
+                                    )
+                                }
                             }
                         }
                     }
@@ -1913,6 +1976,37 @@ fun ActionPlanCard(
                 }
             }
 
+            val parsedArgs = remember(action.argumentsJson) {
+                try {
+                    org.json.JSONObject(action.argumentsJson)
+                } catch (_: Exception) {
+                    null
+                }
+            }
+            val recipientPreview = remember(parsedArgs) {
+                parsedArgs?.optString("to", "")?.takeIf { it.isNotBlank() }
+                    ?: parsedArgs?.optString("messageId", "")?.takeIf { it.isNotBlank() }?.let { "Mensaje #$it" }
+                    ?: parsedArgs?.let { j ->
+                        val owner = j.optString("owner", "")
+                        val repo = j.optString("repo", "")
+                        val projectId = j.optString("projectId", "")
+                        when {
+                            owner.isNotBlank() && repo.isNotBlank() -> "$owner/$repo"
+                            projectId.isNotBlank() -> projectId
+                            else -> null
+                        }
+                    }
+            }
+            val subjectPreview = remember(parsedArgs) {
+                parsedArgs?.optString("subject", "")?.takeIf { it.isNotBlank() }
+                    ?: parsedArgs?.optString("title", "")?.takeIf { it.isNotBlank() }
+            }
+            val bodyPreview = remember(parsedArgs) {
+                val raw = parsedArgs?.optString("body", "")?.takeIf { it.isNotBlank() }
+                    ?: parsedArgs?.optString("description", "")?.takeIf { it.isNotBlank() }
+                raw?.let { if (it.length > 200) "${it.take(200)}..." else it }
+            }
+
             Spacer(modifier = Modifier.height(10.dp))
             Text(
                 text = action.details,
@@ -1921,7 +2015,49 @@ fun ActionPlanCard(
                 color = MaterialTheme.colorScheme.onSurface
             )
 
-            Spacer(modifier = Modifier.height(4.dp))
+            if (recipientPreview != null || subjectPreview != null || bodyPreview != null) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
+                ) {
+                    Column(
+                        modifier = Modifier.padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        if (recipientPreview != null) {
+                            Text(
+                                text = "Destinatario: $recipientPreview",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.testTag("pending_action_recipient")
+                            )
+                        }
+                        if (subjectPreview != null) {
+                            Text(
+                                text = "Asunto: $subjectPreview",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.testTag("pending_action_subject")
+                            )
+                        }
+                        if (bodyPreview != null) {
+                            Text(
+                                text = "Cuerpo: $bodyPreview",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f),
+                                modifier = Modifier.testTag("pending_action_body_preview")
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
             Text(
                 text = "Metodo: ${action.functionName}",
                 fontSize = 10.sp,
@@ -2385,6 +2521,8 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
     
     val whisperStatus by viewModel.localWhisperStatus.collectAsStateWithLifecycle()
     val whisperProgress by viewModel.localWhisperProgress.collectAsStateWithLifecycle()
+    val strictOfflineStt by viewModel.strictOfflineStt.collectAsStateWithLifecycle()
+    val sttEngineMode by viewModel.sttEngineMode.collectAsStateWithLifecycle()
 
     val isEn = settings["language"] == "en"
     fun t(key: String): String = L10n.t(key, isEn)
@@ -3046,11 +3184,79 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = "Configura Whisper API Remoto o Whisper Local sin conexión. Elige cuál usar por defecto.",
+                        text = "Configura el motor de reconocimiento en el dispositivo o Whisper API remoto. Elige cuál usar por defecto.",
                         fontSize = 10.5.sp,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                     )
                     Spacer(modifier = Modifier.height(10.dp))
+
+                    // Strict offline toggle
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 8.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Solo offline estricto",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = "No iniciar dictado si el dispositivo no tiene motor en el dispositivo.",
+                                    fontSize = 10.sp,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Switch(
+                                checked = strictOfflineStt,
+                                onCheckedChange = { viewModel.setStrictOfflineStt(it) },
+                                modifier = Modifier.testTag("strict_offline_stt_switch")
+                            )
+                        }
+                    }
+
+                    if (sttEngineMode == OnDeviceSpeechRecognizerHelper.EngineMode.SYSTEM_MAYBE_ONLINE) {
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 8.dp)
+                                .testTag("settings_stt_system_warning"),
+                            shape = RoundedCornerShape(10.dp),
+                            color = StatusWarning.copy(alpha = 0.12f),
+                            border = BorderStroke(1.dp, StatusWarning.copy(alpha = 0.35f))
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    Icons.Default.Warning,
+                                    contentDescription = "Aviso motor sistema",
+                                    tint = StatusWarning,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Este dispositivo no tiene motor offline; el audio puede procesarse en servidores de Google.",
+                                    fontSize = 10.5.sp,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+                    }
 
                     // List of existing STT profiles
                     if (sttProfiles.isEmpty()) {
@@ -3129,38 +3335,23 @@ fun RisoSettingsScreen(viewModel: RisoViewModel) {
                                             horizontalArrangement = Arrangement.spacedBy(4.dp)
                                         ) {
                                             if (profile.isLocal) {
-                                                if (whisperStatus == "Ready") {
-                                                    OutlinedButton(
-                                                        onClick = { viewModel.deleteLocalWhisper() },
-                                                        modifier = Modifier.height(28.dp),
-                                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                                                        shape = RoundedCornerShape(6.dp),
-                                                        colors = ButtonDefaults.outlinedButtonColors(
-                                                            contentColor = MaterialTheme.colorScheme.error
-                                                        ),
-                                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.35f))
-                                                    ) {
-                                                        Icon(Icons.Default.Delete, contentDescription = "Borrar", modifier = Modifier.size(11.dp))
-                                                        Spacer(modifier = Modifier.width(3.dp))
-                                                        Text("Borrar modelo", fontSize = 9.5.sp, fontWeight = FontWeight.SemiBold)
-                                                    }
-                                                } else {
-                                                    Button(
-                                                        onClick = { viewModel.downloadLocalWhisper() },
-                                                        enabled = whisperStatus != "Downloading",
-                                                        modifier = Modifier.height(28.dp),
-                                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                                                        shape = RoundedCornerShape(6.dp),
-                                                        colors = ButtonDefaults.buttonColors(
-                                                            containerColor = MaterialTheme.colorScheme.tertiary
-                                                        )
-                                                    ) {
-                                                        Text(
-                                                            text = if (whisperStatus == "Downloading") "${whisperProgress}%" else "Descargar",
-                                                            fontSize = 10.sp,
-                                                            fontWeight = FontWeight.Bold
-                                                        )
-                                                    }
+                                                OutlinedButton(
+                                                    onClick = { viewModel.triggerOnDeviceSpeechModelDownload() },
+                                                    modifier = Modifier
+                                                        .height(28.dp)
+                                                        .testTag("download_on_device_stt_btn"),
+                                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                                                    shape = RoundedCornerShape(6.dp),
+                                                    colors = ButtonDefaults.outlinedButtonColors(
+                                                        contentColor = MaterialTheme.colorScheme.tertiary
+                                                    ),
+                                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.tertiary.copy(alpha = 0.45f))
+                                                ) {
+                                                    Text(
+                                                        text = "Descargar idioma",
+                                                        fontSize = 9.5.sp,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
                                                 }
                                             }
 

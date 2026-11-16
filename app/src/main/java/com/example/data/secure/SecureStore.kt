@@ -23,8 +23,10 @@ class SecureStore(context: Context) {
         Context.MODE_PRIVATE
     )
 
-    private val keyStore: KeyStore = KeyStore.getInstance(KEYSTORE_PROVIDER).apply {
-        load(null)
+    private val keyStore: KeyStore by lazy {
+        KeyStore.getInstance(KEYSTORE_PROVIDER).apply {
+            load(null)
+        }
     }
 
     companion object {

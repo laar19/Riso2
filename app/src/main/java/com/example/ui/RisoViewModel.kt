@@ -131,6 +131,21 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
     private val _recordingFeedback = MutableStateFlow("")
     val recordingFeedback: StateFlow<String> = _recordingFeedback.asStateFlow()
 
+    private val _sttRmsLevel = MutableStateFlow(0f)
+    val sttRmsLevel: StateFlow<Float> = _sttRmsLevel.asStateFlow()
+
+    private val _sttEngineMode = MutableStateFlow(speechRecognizer.detectEngineMode())
+    val sttEngineMode: StateFlow<com.example.service.audio.OnDeviceSpeechRecognizerHelper.EngineMode> = _sttEngineMode.asStateFlow()
+
+    private val _strictOfflineStt = MutableStateFlow(false)
+    val strictOfflineStt: StateFlow<Boolean> = _strictOfflineStt.asStateFlow()
+
+    private val _sttSystemWarning = MutableStateFlow<String?>(null)
+    val sttSystemWarning: StateFlow<String?> = _sttSystemWarning.asStateFlow()
+
+    private val _pendingSttDownloadLang = MutableStateFlow<String?>(null)
+    val pendingSttDownloadLang: StateFlow<String?> = _pendingSttDownloadLang.asStateFlow()
+
     // Multi-attachment state supporting photos, gallery images, and files
     private val _attachments = MutableStateFlow<List<ChatAttachment>>(emptyList())
     val attachments: StateFlow<List<ChatAttachment>> = _attachments.asStateFlow()
@@ -151,6 +166,8 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
 
             val savedMode = repository.getSetting("planning_mode")
             _planningMode.value = savedMode != "false"
+            _strictOfflineStt.value = repository.getSetting("strict_offline_stt") == "true"
+            _sttEngineMode.value = speechRecognizer.detectEngineMode()
 
             // Load Multi-Account setup
             val accountsJson = repository.getSetting("email_accounts_json") ?: ""
@@ -281,17 +298,23 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
             val activeSttId = repository.getSetting("active_stt_profile_id") ?: ""
             val localDefaultProfile = SttProfile(
                 id = "stt_local_default",
-                name = "Whisper Local (Offline)",
+                name = "Reconocimiento en el dispositivo",
                 isLocal = true,
                 apiEndpoint = "",
-                modelName = "whisper-small-v3",
+                modelName = "android-speech",
                 apiKey = ""
             )
 
             val parsedStt = if (sttProfilesJson.isNotBlank()) {
                 val list = parseSttProfiles(sttProfilesJson).map { prof ->
                     val sec = if (prof.isLocal) "" else (repository.getSecret("stt_key_${prof.id}") ?: prof.apiKey)
-                    prof.copy(apiKey = sec)
+                    val cleanName = if (prof.id == "stt_local_default" && prof.name.contains("Whisper", ignoreCase = true)) {
+                        "Reconocimiento en el dispositivo"
+                    } else prof.name
+                    val cleanModel = if (prof.id == "stt_local_default" && prof.modelName.contains("whisper", ignoreCase = true)) {
+                        "android-speech"
+                    } else prof.modelName
+                    prof.copy(name = cleanName, modelName = cleanModel, apiKey = sec)
                 }.toMutableList()
                 if (list.none { it.isLocal }) {
                     list.add(0, localDefaultProfile)
@@ -725,32 +748,96 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // Real Microphone Audio Recording and Whisper/Groq STT Integration
+    fun setStrictOfflineStt(enabled: Boolean) {
+        _strictOfflineStt.value = enabled
+        viewModelScope.launch {
+            repository.saveSetting("strict_offline_stt", enabled.toString())
+        }
+    }
+
+    fun dismissSttSystemWarning() {
+        _sttSystemWarning.value = null
+    }
+
+    fun triggerOnDeviceSpeechModelDownload() {
+        val targetLang = _pendingSttDownloadLang.value ?: settings.value["language"]
+        speechRecognizer.triggerModelDownload(
+            appLanguage = targetLang,
+            onStatus = { status -> _recordingFeedback.value = status },
+            onComplete = { success, msg ->
+                if (success) {
+                    _pendingSttDownloadLang.value = null
+                }
+                _recordingFeedback.value = msg
+            }
+        )
+    }
+
+    // Real Microphone Audio Recording and On-Device / Whisper Remote STT Integration
     fun startAudioRecording() {
         if (_isRecordingAudio.value) return
         val activeProfile = sttProfiles.value.firstOrNull { it.id == activeSttProfileId.value }
         val isLocal = activeProfile?.isLocal == true
 
         if (isLocal) {
-            if (_localWhisperStatus.value != "Ready") {
-                _recordingFeedback.value = "⚠️ Modelo Whisper Local no descargado. Descárgalo en Ajustes o usa STT Remoto."
-                return
+            _pendingSttDownloadLang.value = null
+            val detectedMode = speechRecognizer.detectEngineMode()
+            _sttEngineMode.value = detectedMode
+
+            if (detectedMode == com.example.service.audio.OnDeviceSpeechRecognizerHelper.EngineMode.SYSTEM_MAYBE_ONLINE) {
+                _sttSystemWarning.value = "Este dispositivo no tiene motor offline; el audio puede procesarse en servidores de Google."
+                if (_strictOfflineStt.value) {
+                    _isRecordingAudio.value = false
+                    _sttRmsLevel.value = 0f
+                    _recordingFeedback.value = "Solo offline estricto activo: este dispositivo no tiene motor on-device."
+                    return
+                }
+            } else {
+                _sttSystemWarning.value = null
             }
 
             _pendingLocalTranscription.value = null
             _isRecordingAudio.value = true
-            _recordingFeedback.value = "Escuchando con Whisper Local... Habla ahora"
+            _sttRmsLevel.value = 0f
+            _recordingFeedback.value = when (detectedMode) {
+                com.example.service.audio.OnDeviceSpeechRecognizerHelper.EngineMode.ON_DEVICE ->
+                    "Escuchando (en el dispositivo)... Habla ahora"
+                com.example.service.audio.OnDeviceSpeechRecognizerHelper.EngineMode.SYSTEM_MAYBE_ONLINE ->
+                    "Escuchando (sistema)... Habla ahora"
+            }
+
+            val appLanguage = settings.value["language"]
 
             speechRecognizer.startListening(
+                appLanguage = appLanguage,
+                strictOfflineOnly = _strictOfflineStt.value,
                 onResult = { recognizedText ->
                     _pendingLocalTranscription.value = recognizedText
+                    _sttRmsLevel.value = 0f
                     _recordingFeedback.value = "✓ Voz detectada: $recognizedText"
                 },
                 onError = { err ->
+                    _isRecordingAudio.value = false
+                    _sttRmsLevel.value = 0f
                     _recordingFeedback.value = "✕ $err"
                 },
                 onStatus = { status ->
                     _recordingFeedback.value = status
+                },
+                onRmsChangedLevel = { level ->
+                    _sttRmsLevel.value = level
+                },
+                onEngineModeChanged = { mode ->
+                    _sttEngineMode.value = mode
+                    _sttSystemWarning.value = if (mode == com.example.service.audio.OnDeviceSpeechRecognizerHelper.EngineMode.SYSTEM_MAYBE_ONLINE) {
+                        "Este dispositivo no tiene motor offline; el audio puede procesarse en servidores de Google."
+                    } else null
+                },
+                onModelDownloadAvailable = { downloadableLang ->
+                    _isRecordingAudio.value = false
+                    _sttRmsLevel.value = 0f
+                    _pendingSttDownloadLang.value = downloadableLang
+                    _recordingFeedback.value = "El idioma $downloadableLang no está descargado offline. Descárgalo para dictar en el dispositivo."
                 }
             )
         } else {
@@ -768,12 +855,18 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
     fun stopAudioRecordingAndTranscribe(onTranscript: (String) -> Unit) {
         if (!_isRecordingAudio.value) return
         _isRecordingAudio.value = false
+        _sttRmsLevel.value = 0f
         val activeProfile = sttProfiles.value.firstOrNull { it.id == activeSttProfileId.value }
         val isLocal = activeProfile?.isLocal == true
 
         if (isLocal) {
             _isTranscribingAudio.value = true
-            _recordingFeedback.value = "Procesando transcripción con Whisper Local..."
+            _recordingFeedback.value = when (_sttEngineMode.value) {
+                com.example.service.audio.OnDeviceSpeechRecognizerHelper.EngineMode.ON_DEVICE ->
+                    "Procesando transcripción (en el dispositivo)..."
+                com.example.service.audio.OnDeviceSpeechRecognizerHelper.EngineMode.SYSTEM_MAYBE_ONLINE ->
+                    "Procesando transcripción (sistema)..."
+            }
 
             speechRecognizer.stopListening { immediateResult ->
                 if (immediateResult.isNotBlank()) {
@@ -928,6 +1021,11 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             repository.saveSetting("planning_mode", newVal.toString())
         }
+    }
+
+    internal suspend fun setPlanningMode(enabled: Boolean) {
+        _planningMode.value = enabled
+        repository.saveSetting("planning_mode", enabled.toString())
     }
 
     fun createNewSession() {
@@ -1225,21 +1323,21 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // Handles the 10 core email tasks and enforces the Planning Mode safety shield
-    private suspend fun handleFunctionCalling(sessionId: String, call: GeminiFunctionCall, depth: Int = 0) {
+    internal suspend fun handleFunctionCalling(sessionId: String, call: GeminiFunctionCall, depth: Int = 0) {
         val fName = call.name
         val args = call.args ?: emptyMap()
         if (com.example.BuildConfig.DEBUG) {
             Log.d(TAG, "executeFunction: $fName")
         }
 
-        val isWriteAction = fName in listOf(
-            "send_email", "reply_to_email", "forward_email",
-            "mark_as_read", "mark_as_unread", "archive_email", "delete_email",
-            "create_github_issue", "create_gitlab_issue"
-        )
+        val requiresConfirmation = when (fName) {
+            in ALWAYS_CONFIRM -> true
+            in LOW_RISK_WRITE -> _planningMode.value
+            else -> false
+        }
 
-        if (isWriteAction && _planningMode.value) {
-            // SAFE PLAN EXPLAIN: planning mode restricts execution
+        if (requiresConfirmation) {
+            // SAFE PLAN EXPLAIN: high-risk write or planning mode restricts execution
             val planDetails = compilePlanDescription(fName, args)
             val msgId = UUID.randomUUID().toString()
             
@@ -1269,7 +1367,7 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
                 )
             )
         } else {
-            // Direct execution mode: runs immediately
+            // Direct execution mode (low-risk write in direct mode or read-only action): runs immediately
             executeFunction(sessionId, call, depth = depth)
         }
     }
@@ -2253,12 +2351,16 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 if (isLocal) {
-                    val ready = _localWhisperStatus.value == "Ready"
+                    val available = speechRecognizer.isAvailable()
+                    val mode = speechRecognizer.detectEngineMode()
+                    _sttEngineMode.value = mode
                     withContext(Dispatchers.Main) {
-                        if (ready) {
-                            onResult(true, "✓ Whisper Local listo")
-                        } else {
-                            onResult(false, "⚠️ Modelo local no descargado aún")
+                        when {
+                            !available -> onResult(false, "✕ Reconocedor de voz del sistema no disponible")
+                            mode == com.example.service.audio.OnDeviceSpeechRecognizerHelper.EngineMode.ON_DEVICE ->
+                                onResult(true, "✓ Motor en el dispositivo (ON_DEVICE) listo")
+                            else ->
+                                onResult(true, "⚠️ Motor del sistema disponible (puede usar servidores de Google)")
                         }
                     }
                 } else {
@@ -2378,14 +2480,14 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
             llmProfiles.value = emptyList()
             activeLlmProfileId.value = null
             
-            // Clean STT with permanent local whisper option ready
+            // Clean STT with permanent on-device recognition option ready
             val initStt = listOf(
                 SttProfile(
                     id = "stt_local_default",
-                    name = "Whisper Local (Offline)",
+                    name = "Reconocimiento en el dispositivo",
                     isLocal = true,
                     apiEndpoint = "",
-                    modelName = "whisper-small-v3",
+                    modelName = "android-speech",
                     apiKey = ""
                 )
             )
@@ -2394,6 +2496,10 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
             _localWhisperStatus.value = "Not Downloaded"
             _localWhisperProgress.value = 0f
             _recordingFeedback.value = ""
+            _sttRmsLevel.value = 0f
+            _strictOfflineStt.value = false
+            _sttSystemWarning.value = null
+            _pendingSttDownloadLang.value = null
             
             // Clean audio recordings in cache
             try {
@@ -2422,6 +2528,22 @@ class RisoViewModel(application: Application) : AndroidViewModel(application) {
             "body" to body,
             "date" to date,
             "isRead" to isRead
+        )
+    }
+
+    companion object {
+        val ALWAYS_CONFIRM = setOf(
+            "send_email",
+            "reply_to_email",
+            "forward_email",
+            "delete_email",
+            "create_github_issue",
+            "create_gitlab_issue"
+        )
+        val LOW_RISK_WRITE = setOf(
+            "mark_as_read",
+            "mark_as_unread",
+            "archive_email"
         )
     }
 }
